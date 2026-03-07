@@ -41,3 +41,27 @@ export class TransportError extends Data.TaggedError("TransportError")<{
 	readonly operation: string
 	readonly cause: unknown
 }> {}
+
+// ── Domain errors (schema-validated, serializable) ─────────────────────
+
+/**
+ * Schema decode/encode failed.
+ *
+ * Domain error for schema validation failures. This error is serializable
+ * and can be sent over the wire (e.g., in HTTP API responses).
+ *
+ * @example
+ * ```ts
+ * new SchemaError({
+ *   message: "Invalid user data",
+ *   cause: Schema.Defect.of(parseError)
+ * })
+ * ```
+ */
+export class SchemaError extends Schema.TaggedErrorClass<SchemaError>()(
+	"SchemaError",
+	{
+		message: Schema.String,
+		cause: Schema.Defect,
+	},
+) {}
