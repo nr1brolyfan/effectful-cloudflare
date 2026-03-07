@@ -14,6 +14,7 @@ import type {
 	R2Checksums,
 	R2Range,
 } from "./R2.js";
+import type { QueueBinding } from "./Queue.js";
 
 // ── Internal types ──────────────────────────────────────────────────────
 
@@ -529,8 +530,8 @@ export const memoryD1 = (): D1Binding => {
 export const memoryR2 = (): R2Binding => {
 	type StoredObject = {
 		data: ArrayBuffer;
-		httpMetadata?: R2HTTPMetadata;
-		customMetadata?: Record<string, string>;
+		httpMetadata?: R2HTTPMetadata | undefined;
+		customMetadata?: Record<string, string> | undefined;
 		uploaded: Date;
 		version: string;
 		etag: string;
@@ -549,7 +550,8 @@ export const memoryR2 = (): R2Binding => {
 		}
 		
 		if (typeof value === "string") {
-			return new TextEncoder().encode(value).buffer;
+			const uint8 = new TextEncoder().encode(value);
+			return uint8.buffer.slice(uint8.byteOffset, uint8.byteOffset + uint8.byteLength);
 		}
 		
 		if (value instanceof ArrayBuffer) {
@@ -557,10 +559,17 @@ export const memoryR2 = (): R2Binding => {
 		}
 		
 		if (ArrayBuffer.isView(value)) {
-			return value.buffer.slice(
-				value.byteOffset,
-				value.byteOffset + value.byteLength,
-			);
+			const buffer = value.buffer;
+			// Ensure we return ArrayBuffer, not SharedArrayBuffer
+			if (buffer instanceof ArrayBuffer) {
+				return buffer.slice(
+					value.byteOffset,
+					value.byteOffset + value.byteLength,
+				);
+			}
+			// Convert SharedArrayBuffer to ArrayBuffer
+			const arr = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+			return arr.buffer.slice(arr.byteOffset, arr.byteOffset + arr.byteLength);
 		}
 		
 		if (value instanceof Blob) {
@@ -586,7 +595,7 @@ export const memoryR2 = (): R2Binding => {
 			data = data.slice(offset, offset + length);
 		}
 
-		return {
+		const baseObject: R2Object = {
 			key,
 			version: stored.version,
 			size: data.byteLength,
@@ -594,9 +603,6 @@ export const memoryR2 = (): R2Binding => {
 			httpEtag: stored.httpEtag,
 			checksums: stored.checksums,
 			uploaded: stored.uploaded,
-			httpMetadata: stored.httpMetadata,
-			customMetadata: stored.customMetadata,
-			range,
 			body: new ReadableStream<Uint8Array>({
 				start(controller) {
 					controller.enqueue(new Uint8Array(data));
@@ -626,6 +632,19 @@ export const memoryR2 = (): R2Binding => {
 				}
 			},
 		};
+
+		// Add optional fields only if they exist
+		if (stored.httpMetadata) {
+			baseObject.httpMetadata = stored.httpMetadata;
+		}
+		if (stored.customMetadata) {
+			baseObject.customMetadata = stored.customMetadata;
+		}
+		if (range) {
+			baseObject.range = range;
+		}
+
+		return baseObject;
 	};
 
 	const get = async (
@@ -889,5 +908,105 @@ export const memoryR2 = (): R2Binding => {
 		list,
 		createMultipartUpload,
 		resumeMultipartUpload,
+	};
+};
+
+// ── memoryQueue ─────────────────────────────────────────────────────────
+
+/**
+ * In-memory Queue implementation for testing.
+ *
+ * Implements the `QueueBinding` structural interface with:
+ * - In-memory array storage for messages
+ * - Support for send and sendBatch operations
+ * - Message options (contentType, delaySeconds)
+ * - Exposed messages array for test inspection
+ *
+ * **Note:** This is a test mock. It does NOT:
+ * - Actually delay messages based on delaySeconds
+ * - Persist messages across test runs
+ * - Implement queue consumer behavior
+ *
+ * The messages are simply stored in an array that tests can inspect to verify
+ * that the expected messages were sent with the correct options.
+ *
+ * @returns Object with QueueBinding interface plus `messages` array for inspection
+ *
+ * @example
+ * ```ts
+ * import { it } from "@effect/vitest"
+ * import { Effect } from "effect"
+ * import { QueueProducer } from "./Queue.js"
+ * import { memoryQueue } from "./Testing.js"
+ *
+ * it.effect("sends messages to queue", () =>
+ *   Effect.gen(function*() {
+ *     const binding = memoryQueue()
+ *     const queue = yield* QueueProducer
+ *     
+ *     yield* queue.send({ type: "test", data: "hello" })
+ *     yield* queue.sendBatch([
+ *       { body: { type: "task1" } },
+ *       { body: { type: "task2" }, delaySeconds: 60 }
+ *     ])
+ *     
+ *     // Inspect messages that were sent
+ *     expect(binding.messages).toHaveLength(3)
+ *     expect(binding.messages[0].body).toEqual({ type: "test", data: "hello" })
+ *     expect(binding.messages[2].delaySeconds).toBe(60)
+ *   }).pipe(Effect.provide(QueueProducer.layer(binding)))
+ * )
+ * ```
+ */
+export const memoryQueue = (): QueueBinding<unknown> & {
+	/**
+	 * Array of messages that have been sent to the queue.
+	 * Use this in tests to verify messages were sent correctly.
+	 */
+	readonly messages: Array<{
+		body: unknown;
+		contentType?: string;
+		delaySeconds?: number;
+	}>;
+} => {
+	const messages: Array<{
+		body: unknown;
+		contentType?: string;
+		delaySeconds?: number;
+	}> = [];
+
+	return {
+		messages,
+
+		send: async <T>(
+			message: T,
+			options?: { contentType?: string; delaySeconds?: number },
+		) => {
+			messages.push({
+				body: message,
+				...(options?.contentType && { contentType: options.contentType }),
+				...(options?.delaySeconds !== undefined && {
+					delaySeconds: options.delaySeconds,
+				}),
+			});
+		},
+
+		sendBatch: async <T>(
+			batch: ReadonlyArray<{
+				body: T;
+				contentType?: string;
+				delaySeconds?: number;
+			}>,
+		) => {
+			for (const msg of batch) {
+				messages.push({
+					body: msg.body,
+					...(msg.contentType && { contentType: msg.contentType }),
+					...(msg.delaySeconds !== undefined && {
+						delaySeconds: msg.delaySeconds,
+					}),
+				});
+			}
+		},
 	};
 };
