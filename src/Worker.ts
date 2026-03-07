@@ -1,4 +1,4 @@
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Layer, ServiceMap } from "effect";
 
 // ── WorkerEnv Service ──────────────────────────────────────────────────
 
@@ -22,17 +22,17 @@ import { Effect, Layer, ServiceMap } from "effect"
  * ```
  */
 export class WorkerEnv extends ServiceMap.Service<
-	WorkerEnv,
-	Record<string, unknown>
+  WorkerEnv,
+  Record<string, unknown>
 >()("effectful-cloudflare/WorkerEnv") {
-	/**
-	 * Create a layer from the worker environment object.
-	 *
-	 * @param env - The worker environment object from the fetch handler
-	 * @returns Layer providing WorkerEnv service
-	 */
-	static layer = (env: Record<string, unknown>) =>
-		Layer.succeed(this, this.of(env))
+  /**
+   * Create a layer from the worker environment object.
+   *
+   * @param env - The worker environment object from the fetch handler
+   * @returns Layer providing WorkerEnv service
+   */
+  static layer = (env: Record<string, unknown>) =>
+    Layer.succeed(this, this.of(env));
 }
 
 // ── ExecutionCtx Service ───────────────────────────────────────────────
@@ -66,42 +66,41 @@ export class WorkerEnv extends ServiceMap.Service<
  * ```
  */
 export class ExecutionCtx extends ServiceMap.Service<
-	ExecutionCtx,
-	{
-		readonly waitUntil: (
-			effect: Effect.Effect<void, never>,
-		) => Effect.Effect<void>
-		readonly passThroughOnException: () => Effect.Effect<void>
-	}
+  ExecutionCtx,
+  {
+    readonly waitUntil: (
+      effect: Effect.Effect<void, never>
+    ) => Effect.Effect<void>;
+    readonly passThroughOnException: () => Effect.Effect<void>;
+  }
 >()("effectful-cloudflare/ExecutionCtx") {
-	/**
-	 * Create ExecutionCtx service from native Cloudflare ExecutionContext.
-	 *
-	 * This static method wraps the native `ExecutionContext` methods in Effect programs.
-	 * Uses `Effect.fn` for automatic tracing.
-	 *
-	 * @param ctx - Native Cloudflare ExecutionContext from fetch handler
-	 * @returns Effect that yields the ExecutionCtx service
-	 */
-	static make = Effect.fn("ExecutionCtx.make")(function* (
-		ctx: ExecutionContext,
-	) {
-		return ExecutionCtx.of({
-			waitUntil: (effect) =>
-				Effect.sync(() => ctx.waitUntil(Effect.runPromise(effect))),
-			passThroughOnException: () =>
-				Effect.sync(() => ctx.passThroughOnException()),
-		})
-	})
+  /**
+   * Create ExecutionCtx service from native Cloudflare ExecutionContext.
+   *
+   * This static method wraps the native `ExecutionContext` methods in Effect programs.
+   * Uses `Effect.fn` for automatic tracing.
+   *
+   * @param ctx - Native Cloudflare ExecutionContext from fetch handler
+   * @returns Effect that yields the ExecutionCtx service
+   */
+  static make = Effect.fn("ExecutionCtx.make")(function* (
+    ctx: ExecutionContext
+  ) {
+    return ExecutionCtx.of({
+      waitUntil: (effect) =>
+        Effect.sync(() => ctx.waitUntil(Effect.runPromise(effect))),
+      passThroughOnException: () =>
+        Effect.sync(() => ctx.passThroughOnException()),
+    });
+  });
 
-	/**
-	 * Create a layer from native Cloudflare ExecutionContext.
-	 *
-	 * @param ctx - Native Cloudflare ExecutionContext from fetch handler
-	 * @returns Layer providing ExecutionCtx service
-	 */
-	static layer = (ctx: ExecutionContext) =>
-		Layer.effect(this, this.make(ctx))
+  /**
+   * Create a layer from native Cloudflare ExecutionContext.
+   *
+   * @param ctx - Native Cloudflare ExecutionContext from fetch handler
+   * @returns Layer providing ExecutionCtx service
+   */
+  static layer = (ctx: ExecutionContext) => Layer.effect(this, this.make(ctx));
 }
 
 // ── Worker Entrypoint Functions ────────────────────────────────────────
@@ -138,32 +137,29 @@ export class ExecutionCtx extends ServiceMap.Service<
  * ```
  */
 export const serve = <E, R>(
-	handler: (request: Request) => Effect.Effect<Response, E, R>,
-	layers: (
-		env: Record<string, unknown>,
-		ctx: ExecutionContext,
-	) => Layer.Layer<R>,
+  handler: (request: Request) => Effect.Effect<Response, E, R>,
+  layers: (
+    env: Record<string, unknown>,
+    ctx: ExecutionContext
+  ) => Layer.Layer<R>
 ): ExportedHandler => ({
-	fetch: async (request, env, ctx) => {
-		const layer = layers(env as Record<string, unknown>, ctx)
-		return Effect.runPromise(
-			handler(request).pipe(
-				Effect.provide(layer),
-				Effect.catchCause(() =>
-					Effect.succeed(
-						new Response(
-							JSON.stringify({ error: "Internal Server Error" }),
-							{
-								status: 500,
-								headers: { "Content-Type": "application/json" },
-							},
-						),
-					),
-				),
-			),
-		)
-	},
-})
+  fetch: (request, env, ctx) => {
+    const layer = layers(env as Record<string, unknown>, ctx);
+    return Effect.runPromise(
+      handler(request).pipe(
+        Effect.provide(layer),
+        Effect.catchCause(() =>
+          Effect.succeed(
+            new Response(JSON.stringify({ error: "Internal Server Error" }), {
+              status: 500,
+              headers: { "Content-Type": "application/json" },
+            })
+          )
+        )
+      )
+    );
+  },
+});
 
 /**
  * Create a Cloudflare Worker scheduled handler from an Effect program.
@@ -196,17 +192,17 @@ export const serve = <E, R>(
  * ```
  */
 export const onScheduled = <E, R>(
-	handler: (controller: ScheduledController) => Effect.Effect<void, E, R>,
-	layers: (
-		env: Record<string, unknown>,
-		ctx: ExecutionContext,
-	) => Layer.Layer<R>,
+  handler: (controller: ScheduledController) => Effect.Effect<void, E, R>,
+  layers: (
+    env: Record<string, unknown>,
+    ctx: ExecutionContext
+  ) => Layer.Layer<R>
 ): Pick<ExportedHandler, "scheduled"> => ({
-	scheduled: async (controller, env, ctx) => {
-		const layer = layers(env as Record<string, unknown>, ctx)
-		await Effect.runPromise(handler(controller).pipe(Effect.provide(layer)))
-	},
-})
+  scheduled: async (controller, env, ctx) => {
+    const layer = layers(env as Record<string, unknown>, ctx);
+    await Effect.runPromise(handler(controller).pipe(Effect.provide(layer)));
+  },
+});
 
 /**
  * Create a Cloudflare Worker queue handler from an Effect program.
@@ -241,16 +237,16 @@ export const onScheduled = <E, R>(
  * ```
  */
 export const onQueue = <T, E, R>(
-	handler: (batch: MessageBatch<T>) => Effect.Effect<void, E, R>,
-	layers: (
-		env: Record<string, unknown>,
-		ctx: ExecutionContext,
-	) => Layer.Layer<R>,
+  handler: (batch: MessageBatch<T>) => Effect.Effect<void, E, R>,
+  layers: (
+    env: Record<string, unknown>,
+    ctx: ExecutionContext
+  ) => Layer.Layer<R>
 ): Pick<ExportedHandler, "queue"> => ({
-	queue: async (batch, env, ctx) => {
-		const layer = layers(env as Record<string, unknown>, ctx)
-		await Effect.runPromise(
-			handler(batch as MessageBatch<T>).pipe(Effect.provide(layer)),
-		)
-	},
-})
+  queue: async (batch, env, ctx) => {
+    const layer = layers(env as Record<string, unknown>, ctx);
+    await Effect.runPromise(
+      handler(batch as MessageBatch<T>).pipe(Effect.provide(layer))
+    );
+  },
+});

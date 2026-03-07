@@ -1,4 +1,4 @@
-import { Data, Schema } from "effect"
+import { Data, Schema } from "effect";
 
 // ── Internal errors (no schema, not serializable) ──────────────────────
 
@@ -17,8 +17,8 @@ import { Data, Schema } from "effect"
  * ```
  */
 export class BindingError extends Data.TaggedError("BindingError")<{
-	readonly service: string
-	readonly message: string
+  readonly service: string;
+  readonly message: string;
 }> {}
 
 /**
@@ -37,9 +37,9 @@ export class BindingError extends Data.TaggedError("BindingError")<{
  * ```
  */
 export class TransportError extends Data.TaggedError("TransportError")<{
-	readonly service: string
-	readonly operation: string
-	readonly cause: unknown
+  readonly service: string;
+  readonly operation: string;
+  readonly cause: unknown;
 }> {}
 
 // ── Domain errors (schema-validated, serializable) ─────────────────────
@@ -59,11 +59,11 @@ export class TransportError extends Data.TaggedError("TransportError")<{
  * ```
  */
 export class SchemaError extends Schema.TaggedErrorClass<SchemaError>()(
-	"SchemaError",
-	{
-		message: Schema.String,
-		cause: Schema.Defect,
-	},
+  "SchemaError",
+  {
+    message: Schema.String,
+    cause: Schema.Defect,
+  }
 ) {}
 
 /**
@@ -81,10 +81,10 @@ export class SchemaError extends Schema.TaggedErrorClass<SchemaError>()(
  * ```
  */
 export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()(
-	"NotFoundError",
-	{
-		resource: Schema.String,
-		key: Schema.String,
-	},
-	{ httpApiStatus: 404 },
+  "NotFoundError",
+  {
+    resource: Schema.String,
+    key: Schema.String,
+  },
+  { httpApiStatus: 404 }
 ) {}

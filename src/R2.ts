@@ -1,6 +1,6 @@
 // ── src/R2.ts ──────────────────────────────────────────────────────────
 
-import { Data, Schema } from "effect"
+import { Data, Schema } from "effect";
 
 // ── Task 7.1: R2Binding structural type ────────────────────────────────
 
@@ -8,136 +8,141 @@ import { Data, Schema } from "effect"
  * Minimal structural type for R2Bucket.
  * Allows testing with mocks without requiring @cloudflare/workers-types at runtime.
  */
-export type R2Binding = {
+export interface R2Binding {
+  createMultipartUpload(
+    key: string,
+    options?: {
+      httpMetadata?: R2HTTPMetadata;
+      customMetadata?: Record<string, string>;
+      storageClass?: "Standard" | "InfrequentAccess";
+    }
+  ): Promise<R2MultipartUpload>;
+  delete(keys: string | string[]): Promise<void>;
   get(
     key: string,
     options?: {
       onlyIf?:
         | { etagMatches?: string; etagDoesNotMatch?: string }
-        | { uploadedBefore?: Date; uploadedAfter?: Date }
-      range?: { offset?: number; length?: number; suffix?: number }
-    },
-  ): Promise<R2Object | null>
+        | { uploadedBefore?: Date; uploadedAfter?: Date };
+      range?: { offset?: number; length?: number; suffix?: number };
+    }
+  ): Promise<R2Object | null>;
+  head(key: string): Promise<R2Object | null>;
+  list(options?: {
+    prefix?: string;
+    delimiter?: string;
+    cursor?: string;
+    limit?: number;
+    include?: ("httpMetadata" | "customMetadata")[];
+  }): Promise<R2Objects>;
   put(
     key: string,
-    value: ReadableStream | ArrayBuffer | ArrayBufferView | string | null | Blob,
+    value:
+      | ReadableStream
+      | ArrayBuffer
+      | ArrayBufferView
+      | string
+      | null
+      | Blob,
     options?: {
-      httpMetadata?: R2HTTPMetadata
-      customMetadata?: Record<string, string>
-      md5?: ArrayBuffer | string
-      sha1?: ArrayBuffer | string
-      sha256?: ArrayBuffer | string
-      sha384?: ArrayBuffer | string
-      sha512?: ArrayBuffer | string
-      storageClass?: "Standard" | "InfrequentAccess"
-    },
-  ): Promise<R2Object | null>
-  delete(keys: string | string[]): Promise<void>
-  head(key: string): Promise<R2Object | null>
-  list(options?: {
-    prefix?: string
-    delimiter?: string
-    cursor?: string
-    limit?: number
-    include?: ("httpMetadata" | "customMetadata")[]
-  }): Promise<R2Objects>
-  createMultipartUpload(
-    key: string,
-    options?: {
-      httpMetadata?: R2HTTPMetadata
-      customMetadata?: Record<string, string>
-      storageClass?: "Standard" | "InfrequentAccess"
-    },
-  ): Promise<R2MultipartUpload>
-  resumeMultipartUpload(key: string, uploadId: string): R2MultipartUpload
+      httpMetadata?: R2HTTPMetadata;
+      customMetadata?: Record<string, string>;
+      md5?: ArrayBuffer | string;
+      sha1?: ArrayBuffer | string;
+      sha256?: ArrayBuffer | string;
+      sha384?: ArrayBuffer | string;
+      sha512?: ArrayBuffer | string;
+      storageClass?: "Standard" | "InfrequentAccess";
+    }
+  ): Promise<R2Object | null>;
+  resumeMultipartUpload(key: string, uploadId: string): R2MultipartUpload;
 }
-
 /**
  * R2 Object returned from get/put/head operations.
  * Subset of the full R2Object type from @cloudflare/workers-types.
  */
-export type R2Object = {
-  key: string
-  version: string
-  size: number
-  etag: string
-  httpEtag: string
-  checksums: R2Checksums
-  uploaded: Date
-  httpMetadata?: R2HTTPMetadata
-  customMetadata?: Record<string, string>
-  range?: R2Range
-  body: ReadableStream
-  bodyUsed: boolean
-  arrayBuffer(): Promise<ArrayBuffer>
-  text(): Promise<string>
-  json<T = unknown>(): Promise<T>
-  blob(): Promise<Blob>
-  writeHttpMetadata(headers: Headers): void
+export interface R2Object {
+  arrayBuffer(): Promise<ArrayBuffer>;
+  blob(): Promise<Blob>;
+  body: ReadableStream;
+  bodyUsed: boolean;
+  checksums: R2Checksums;
+  customMetadata?: Record<string, string>;
+  etag: string;
+  httpEtag: string;
+  httpMetadata?: R2HTTPMetadata;
+  json<T = unknown>(): Promise<T>;
+  key: string;
+  range?: R2Range;
+  size: number;
+  text(): Promise<string>;
+  uploaded: Date;
+  version: string;
+  writeHttpMetadata(headers: Headers): void;
 }
 
 /**
  * R2 list result.
  */
-export type R2Objects = {
-  objects: R2Object[]
-  truncated: boolean
-  cursor?: string
-  delimitedPrefixes: string[]
+export interface R2Objects {
+  cursor?: string;
+  delimitedPrefixes: string[];
+  objects: R2Object[];
+  truncated: boolean;
 }
 
 /**
  * R2 Multipart upload handle.
  */
-export type R2MultipartUpload = {
-  key: string
-  uploadId: string
+export interface R2MultipartUpload {
+  abort(): Promise<void>;
+  complete(uploadedParts: R2UploadedPart[]): Promise<R2Object>;
+  key: string;
+  uploadId: string;
   uploadPart(
     partNumber: number,
-    value: ReadableStream | ArrayBuffer | ArrayBufferView | string | Blob,
-  ): Promise<R2UploadedPart>
-  abort(): Promise<void>
-  complete(uploadedParts: R2UploadedPart[]): Promise<R2Object>
+    value: ReadableStream | ArrayBuffer | ArrayBufferView | string | Blob
+  ): Promise<R2UploadedPart>;
 }
 
 /**
  * Uploaded part metadata.
  */
-export type R2UploadedPart = {
-  partNumber: number
-  etag: string
+export interface R2UploadedPart {
+  etag: string;
+  partNumber: number;
 }
 
 /**
  * R2 HTTP metadata.
  */
-export type R2HTTPMetadata = {
-  contentType?: string
-  contentLanguage?: string
-  contentDisposition?: string
-  contentEncoding?: string
-  cacheControl?: string
-  cacheExpiry?: Date
+export interface R2HTTPMetadata {
+  cacheControl?: string;
+  cacheExpiry?: Date;
+  contentDisposition?: string;
+  contentEncoding?: string;
+  contentLanguage?: string;
+  contentType?: string;
 }
 
 /**
  * R2 checksums.
  */
-export type R2Checksums = {
-  md5?: ArrayBuffer
-  sha1?: ArrayBuffer
-  sha256?: ArrayBuffer
-  sha384?: ArrayBuffer
-  sha512?: ArrayBuffer
+export interface R2Checksums {
+  md5?: ArrayBuffer;
+  sha1?: ArrayBuffer;
+  sha256?: ArrayBuffer;
+  sha384?: ArrayBuffer;
+  sha512?: ArrayBuffer;
 }
 
 /**
  * R2 range.
  */
-export type R2Range = {
-  offset?: number
-  length?: number
-  suffix?: number
+export interface R2Range {
+  length?: number;
+  offset?: number;
+  suffix?: number;
 }
 
 // ── Task 7.2: R2-specific errors ────────────────────────────────────────
@@ -147,9 +152,9 @@ export type R2Range = {
  * Wraps unexpected errors from R2 API calls.
  */
 export class R2Error extends Data.TaggedError("R2Error")<{
-  readonly operation: string
-  readonly key?: string | undefined
-  readonly cause: unknown
+  readonly operation: string;
+  readonly key?: string | undefined;
+  readonly cause: unknown;
 }> {}
 
 /**
@@ -157,10 +162,10 @@ export class R2Error extends Data.TaggedError("R2Error")<{
  * Includes the uploadId for debugging.
  */
 export class R2MultipartError extends Data.TaggedError("R2MultipartError")<{
-  readonly operation: "create" | "upload" | "complete" | "abort"
-  readonly uploadId?: string
-  readonly key?: string
-  readonly cause: unknown
+  readonly operation: "create" | "upload" | "complete" | "abort";
+  readonly uploadId?: string;
+  readonly key?: string;
+  readonly cause: unknown;
 }> {}
 
 /**
@@ -168,9 +173,9 @@ export class R2MultipartError extends Data.TaggedError("R2MultipartError")<{
  * Used when generating S3-compatible presigned URLs fails.
  */
 export class R2PresignError extends Data.TaggedError("R2PresignError")<{
-  readonly operation: "get" | "put"
-  readonly key: string
-  readonly cause: unknown
+  readonly operation: "get" | "put";
+  readonly key: string;
+  readonly cause: unknown;
 }> {}
 
 // ── Task 7.3: R2 result types ───────────────────────────────────────────
@@ -179,51 +184,55 @@ export class R2PresignError extends Data.TaggedError("R2PresignError")<{
  * Simplified R2 object metadata (without body).
  * Used by put() and head() operations.
  */
-export type R2ObjectInfo = {
-  readonly key: string
-  readonly version: string
-  readonly size: number
-  readonly etag: string
-  readonly httpEtag: string
-  readonly checksums: R2Checksums
-  readonly uploaded: Date
-  readonly httpMetadata?: R2HTTPMetadata | undefined
-  readonly customMetadata?: Record<string, string> | undefined
-  readonly range?: R2Range | undefined
+export interface R2ObjectInfo {
+  readonly checksums: R2Checksums;
+  readonly customMetadata?: Record<string, string> | undefined;
+  readonly etag: string;
+  readonly httpEtag: string;
+  readonly httpMetadata?: R2HTTPMetadata | undefined;
+  readonly key: string;
+  readonly range?: R2Range | undefined;
+  readonly size: number;
+  readonly uploaded: Date;
+  readonly version: string;
 }
 
 /**
  * R2 list operation result.
  */
-export type R2ListResult = {
-  readonly objects: ReadonlyArray<R2ObjectInfo>
-  readonly truncated: boolean
-  readonly cursor?: string | undefined
-  readonly delimitedPrefixes: ReadonlyArray<string>
+export interface R2ListResult {
+  readonly cursor?: string | undefined;
+  readonly delimitedPrefixes: readonly string[];
+  readonly objects: readonly R2ObjectInfo[];
+  readonly truncated: boolean;
 }
 
 /**
  * Options for R2 get operations.
  */
-export type R2GetOptions = {
+export interface R2GetOptions {
   readonly onlyIf?:
     | { readonly etagMatches?: string; readonly etagDoesNotMatch?: string }
-    | { readonly uploadedBefore?: Date; readonly uploadedAfter?: Date }
-  readonly range?: { readonly offset?: number; readonly length?: number; readonly suffix?: number }
+    | { readonly uploadedBefore?: Date; readonly uploadedAfter?: Date };
+  readonly range?: {
+    readonly offset?: number;
+    readonly length?: number;
+    readonly suffix?: number;
+  };
 }
 
 /**
  * Options for R2 put operations.
  */
-export type R2PutOptions = {
-  readonly httpMetadata?: R2HTTPMetadata
-  readonly customMetadata?: Record<string, string>
-  readonly md5?: ArrayBuffer | string
-  readonly sha1?: ArrayBuffer | string
-  readonly sha256?: ArrayBuffer | string
-  readonly sha384?: ArrayBuffer | string
-  readonly sha512?: ArrayBuffer | string
-  readonly storageClass?: "Standard" | "InfrequentAccess"
+export interface R2PutOptions {
+  readonly customMetadata?: Record<string, string>;
+  readonly httpMetadata?: R2HTTPMetadata;
+  readonly md5?: ArrayBuffer | string;
+  readonly sha1?: ArrayBuffer | string;
+  readonly sha256?: ArrayBuffer | string;
+  readonly sha384?: ArrayBuffer | string;
+  readonly sha512?: ArrayBuffer | string;
+  readonly storageClass?: "Standard" | "InfrequentAccess";
 }
 
 /**
@@ -235,52 +244,52 @@ export type R2PutValue =
   | ArrayBufferView
   | string
   | null
-  | Blob
+  | Blob;
 
 /**
  * Options for R2 list operations.
  */
-export type R2ListOptions = {
-  readonly prefix?: string
-  readonly delimiter?: string
-  readonly cursor?: string
-  readonly limit?: number
-  readonly include?: ReadonlyArray<"httpMetadata" | "customMetadata">
+export interface R2ListOptions {
+  readonly cursor?: string;
+  readonly delimiter?: string;
+  readonly include?: ReadonlyArray<"httpMetadata" | "customMetadata">;
+  readonly limit?: number;
+  readonly prefix?: string;
 }
 
 /**
  * Options for R2 multipart upload operations.
  */
-export type R2MultipartOptions = {
-  readonly httpMetadata?: R2HTTPMetadata
-  readonly customMetadata?: Record<string, string>
-  readonly storageClass?: "Standard" | "InfrequentAccess"
+export interface R2MultipartOptions {
+  readonly customMetadata?: Record<string, string>;
+  readonly httpMetadata?: R2HTTPMetadata;
+  readonly storageClass?: "Standard" | "InfrequentAccess";
 }
 
 /**
  * Presigned URL generation options.
  */
-export type R2PresignOptions = {
-  readonly expiresIn?: number // seconds
-  readonly httpMetadata?: R2HTTPMetadata
+export interface R2PresignOptions {
+  readonly expiresIn?: number; // seconds
+  readonly httpMetadata?: R2HTTPMetadata;
 }
 
 /**
  * Configuration for presigned URL generation.
  * Requires AWS S3-compatible credentials for R2.
  */
-export type R2PresignConfig = {
-  readonly accessKeyId: string
-  readonly secretAccessKey: string
-  readonly accountId: string
-  readonly bucketName: string
+export interface R2PresignConfig {
+  readonly accessKeyId: string;
+  readonly accountId: string;
+  readonly bucketName: string;
+  readonly secretAccessKey: string;
 }
 
 // ── Task 7.4: R2 Service Class ──────────────────────────────────────────
 
-import { Effect, Layer, LayerMap, ServiceMap } from "effect"
-import * as Errors from "./Errors.js"
-import { WorkerEnv } from "./Worker.js"
+import { Effect, Layer, LayerMap, ServiceMap } from "effect";
+import * as Errors from "./Errors.js";
+import { WorkerEnv } from "./Worker.js";
 
 /**
  * R2 service — Effect-wrapped Cloudflare Workers R2 object storage.
@@ -314,34 +323,32 @@ export class R2 extends ServiceMap.Service<
   {
     readonly get: (
       key: string,
-      options?: R2GetOptions,
-    ) => Effect.Effect<R2Object | null, R2Error>
+      options?: R2GetOptions
+    ) => Effect.Effect<R2Object | null, R2Error>;
     readonly getOrFail: (
       key: string,
-      options?: R2GetOptions,
-    ) => Effect.Effect<R2Object, R2Error | Errors.NotFoundError>
+      options?: R2GetOptions
+    ) => Effect.Effect<R2Object, R2Error | Errors.NotFoundError>;
     readonly put: (
       key: string,
       value: R2PutValue,
-      options?: R2PutOptions,
-    ) => Effect.Effect<R2ObjectInfo, R2Error>
+      options?: R2PutOptions
+    ) => Effect.Effect<R2ObjectInfo, R2Error>;
     readonly delete: (
-      key: string | ReadonlyArray<string>,
-    ) => Effect.Effect<void, R2Error>
-    readonly head: (
-      key: string,
-    ) => Effect.Effect<R2ObjectInfo | null, R2Error>
+      key: string | readonly string[]
+    ) => Effect.Effect<void, R2Error>;
+    readonly head: (key: string) => Effect.Effect<R2ObjectInfo | null, R2Error>;
     readonly list: (
-      options?: R2ListOptions,
-    ) => Effect.Effect<R2ListResult, R2Error>
+      options?: R2ListOptions
+    ) => Effect.Effect<R2ListResult, R2Error>;
     readonly createMultipartUpload: (
       key: string,
-      options?: R2MultipartOptions,
-    ) => Effect.Effect<R2MultipartUpload, R2MultipartError>
+      options?: R2MultipartOptions
+    ) => Effect.Effect<R2MultipartUpload, R2MultipartError>;
     readonly resumeMultipartUpload: (
       key: string,
-      uploadId: string,
-    ) => R2MultipartUpload
+      uploadId: string
+    ) => R2MultipartUpload;
   }
 >()("effectful-cloudflare/R2") {
   // ── Task 7.5: Basic CRUD operations ──────────────────────────────────
@@ -374,39 +381,39 @@ export class R2 extends ServiceMap.Service<
     Effect.gen(function* () {
       const get = Effect.fn("R2.get")(function* (
         key: string,
-        options?: R2GetOptions,
+        options?: R2GetOptions
       ) {
         return yield* Effect.tryPromise({
           try: () => binding.get(key, options),
           catch: (cause) => new R2Error({ operation: "get", key, cause }),
-        })
-      })
+        });
+      });
 
       const getOrFail = Effect.fn("R2.getOrFail")(function* (
         key: string,
-        options?: R2GetOptions,
+        options?: R2GetOptions
       ) {
-        const obj = yield* get(key, options)
+        const obj = yield* get(key, options);
         if (obj === null) {
           return yield* Effect.fail(
             new Errors.NotFoundError({
               resource: "R2",
               key,
-            }),
-          )
+            })
+          );
         }
-        return obj
-      })
+        return obj;
+      });
 
       const put = Effect.fn("R2.put")(function* (
         key: string,
         value: R2PutValue,
-        options?: R2PutOptions,
+        options?: R2PutOptions
       ) {
         const obj = yield* Effect.tryPromise({
           try: () => binding.put(key, value, options),
           catch: (cause) => new R2Error({ operation: "put", key, cause }),
-        })
+        });
 
         // R2 put can return null in rare cases (e.g., conditional put failed)
         if (obj === null) {
@@ -415,8 +422,8 @@ export class R2 extends ServiceMap.Service<
               operation: "put",
               key,
               cause: new Error("Put operation returned null"),
-            }),
-          )
+            })
+          );
         }
 
         // Map R2Object to simplified R2ObjectInfo (strip body and methods)
@@ -431,15 +438,15 @@ export class R2 extends ServiceMap.Service<
           httpMetadata: obj.httpMetadata,
           customMetadata: obj.customMetadata,
           range: obj.range,
-        }
-        return info
-      })
+        };
+        return info;
+      });
 
       const del = Effect.fn("R2.delete")(function* (
-        key: string | ReadonlyArray<string>,
+        key: string | readonly string[]
       ) {
         // Convert readonly array to mutable for binding
-        const keyArg = typeof key === "string" ? key : [...key]
+        const keyArg = typeof key === "string" ? key : [...key];
         return yield* Effect.tryPromise({
           try: () => binding.delete(keyArg),
           catch: (cause) =>
@@ -448,17 +455,17 @@ export class R2 extends ServiceMap.Service<
               key: typeof key === "string" ? key : undefined,
               cause,
             }),
-        })
-      })
+        });
+      });
 
       const head = Effect.fn("R2.head")(function* (key: string) {
         const obj = yield* Effect.tryPromise({
           try: () => binding.head(key),
           catch: (cause) => new R2Error({ operation: "head", key, cause }),
-        })
+        });
 
         if (obj === null) {
-          return null
+          return null;
         }
 
         // Map R2Object to simplified R2ObjectInfo
@@ -473,26 +480,30 @@ export class R2 extends ServiceMap.Service<
           httpMetadata: obj.httpMetadata,
           customMetadata: obj.customMetadata,
           range: obj.range,
-        }
-        return info
-      })
+        };
+        return info;
+      });
 
       const list = Effect.fn("R2.list")(function* (options?: R2ListOptions) {
         // Convert readonly array to mutable for binding
         const bindingOptions: Parameters<R2Binding["list"]>[0] = options
           ? {
               ...(options.prefix !== undefined && { prefix: options.prefix }),
-              ...(options.delimiter !== undefined && { delimiter: options.delimiter }),
+              ...(options.delimiter !== undefined && {
+                delimiter: options.delimiter,
+              }),
               ...(options.cursor !== undefined && { cursor: options.cursor }),
               ...(options.limit !== undefined && { limit: options.limit }),
-              ...(options.include !== undefined && { include: [...options.include] }),
+              ...(options.include !== undefined && {
+                include: [...options.include],
+              }),
             }
-          : undefined
+          : undefined;
 
         const result = yield* Effect.tryPromise({
           try: () => binding.list(bindingOptions),
           catch: (cause) => new R2Error({ operation: "list", cause }),
-        })
+        });
 
         // Map R2Objects to R2ListResult with simplified R2ObjectInfo
         const listResult: R2ListResult = {
@@ -511,9 +522,9 @@ export class R2 extends ServiceMap.Service<
           truncated: result.truncated,
           cursor: result.cursor,
           delimitedPrefixes: result.delimitedPrefixes,
-        }
-        return listResult
-      })
+        };
+        return listResult;
+      });
 
       // ── Task 7.6: Multipart upload methods ────────────────────────────
 
@@ -527,14 +538,14 @@ export class R2 extends ServiceMap.Service<
                 key,
                 cause,
               }),
-          })
-        },
-      )
+          });
+        }
+      );
 
       const resumeMultipartUpload = (key: string, uploadId: string) => {
         // resumeMultipartUpload is synchronous in R2 binding
-        return binding.resumeMultipartUpload(key, uploadId)
-      }
+        return binding.resumeMultipartUpload(key, uploadId);
+      };
 
       return {
         get,
@@ -545,8 +556,8 @@ export class R2 extends ServiceMap.Service<
         list,
         createMultipartUpload,
         resumeMultipartUpload,
-      }
-    })
+      };
+    });
 
   /**
    * Create a Layer from an R2 binding.
@@ -566,7 +577,7 @@ export class R2 extends ServiceMap.Service<
    * }).pipe(Effect.provide(layer))
    * ```
    */
-  static layer = (binding: R2Binding) => Layer.effect(this, this.make(binding))
+  static layer = (binding: R2Binding) => Layer.effect(this, this.make(binding));
 
   // ── Task 7.7: Presigned URL generation ────────────────────────────────
 
@@ -610,22 +621,22 @@ export class R2 extends ServiceMap.Service<
   static presign = (
     config: R2PresignConfig,
     key: string,
-    options?: R2PresignOptions & { operation?: "get" | "put" },
+    options?: R2PresignOptions & { operation?: "get" | "put" }
   ) =>
     Effect.fn("R2.presign")(function* () {
-      const operation = options?.operation ?? "get"
-      const expiresIn = options?.expiresIn ?? 3600
-      const contentType = options?.httpMetadata?.contentType
+      const operation = options?.operation ?? "get";
+      const expiresIn = options?.expiresIn ?? 3600;
+      const contentType = options?.httpMetadata?.contentType;
 
       return yield* Effect.tryPromise({
         try: async () => {
-          const method = operation === "get" ? "GET" : "PUT"
+          const method = operation === "get" ? "GET" : "PUT";
           return await generatePresignedUrl(config, {
             key,
             method,
             expiresIn,
             ...(contentType !== undefined && { contentType }),
-          })
+          });
         },
         catch: (cause) =>
           new R2PresignError({
@@ -633,8 +644,8 @@ export class R2 extends ServiceMap.Service<
             key,
             cause,
           }),
-      })
-    })
+      });
+    });
 
   // ── Task 7.8: R2.json(schema) factory ──────────────────────────────────
 
@@ -675,15 +686,15 @@ export class R2 extends ServiceMap.Service<
   static json = <A>(schema: Schema.Schema<A>) => ({
     make: (binding: R2Binding) =>
       Effect.gen(function* () {
-        const baseR2 = yield* R2.make(binding)
+        const baseR2 = yield* R2.make(binding);
 
         const get = Effect.fn("R2.json.get")(function* (
           key: string,
-          options?: R2GetOptions,
+          options?: R2GetOptions
         ) {
-          const obj = yield* baseR2.get(key, options)
+          const obj = yield* baseR2.get(key, options);
           if (obj === null) {
-            return null as A | null
+            return null as A | null;
           }
 
           const text = yield* Effect.tryPromise({
@@ -694,7 +705,7 @@ export class R2 extends ServiceMap.Service<
                 key,
                 cause,
               }),
-          })
+          });
 
           const parsed = yield* Effect.try({
             try: () => JSON.parse(text),
@@ -703,7 +714,7 @@ export class R2 extends ServiceMap.Service<
                 message: `Failed to parse JSON for key "${key}"`,
                 cause: cause as Error,
               }),
-          })
+          });
 
           return yield* Schema.decodeUnknownEffect(schema)(parsed).pipe(
             Effect.mapError(
@@ -711,31 +722,31 @@ export class R2 extends ServiceMap.Service<
                 new Errors.SchemaError({
                   message: `Schema validation failed for key "${key}"`,
                   cause: cause as Error,
-                }),
-            ),
-          )
-        })
+                })
+            )
+          );
+        });
 
         const getOrFail = Effect.fn("R2.json.getOrFail")(function* (
           key: string,
-          options?: R2GetOptions,
+          options?: R2GetOptions
         ) {
-          const value = yield* get(key, options)
+          const value = yield* get(key, options);
           if (value === null) {
             return yield* Effect.fail(
               new Errors.NotFoundError({
                 resource: "R2",
                 key,
-              }),
-            )
+              })
+            );
           }
-          return value
-        })
+          return value;
+        });
 
         const put = Effect.fn("R2.json.put")(function* (
           key: string,
           value: A,
-          options?: R2PutOptions,
+          options?: R2PutOptions
         ) {
           const encoded = yield* Schema.encodeEffect(schema)(value).pipe(
             Effect.mapError(
@@ -743,9 +754,9 @@ export class R2 extends ServiceMap.Service<
                 new Errors.SchemaError({
                   message: `Schema encoding failed for key "${key}"`,
                   cause: cause as Error,
-                }),
-            ),
-          )
+                })
+            )
+          );
 
           const json = yield* Effect.try({
             try: () => JSON.stringify(encoded),
@@ -754,7 +765,7 @@ export class R2 extends ServiceMap.Service<
                 message: `Failed to stringify JSON for key "${key}"`,
                 cause: cause as Error,
               }),
-          })
+          });
 
           return yield* baseR2.put(key, json, {
             ...options,
@@ -762,8 +773,8 @@ export class R2 extends ServiceMap.Service<
               contentType: "application/json",
               ...options?.httpMetadata,
             },
-          })
-        })
+          });
+        });
 
         // Return service with typed methods
         // Note: This object is structurally compatible with R2 service,
@@ -777,7 +788,7 @@ export class R2 extends ServiceMap.Service<
           list: baseR2.list,
           createMultipartUpload: baseR2.createMultipartUpload,
           resumeMultipartUpload: baseR2.resumeMultipartUpload,
-        }
+        };
       }),
     layer: (binding: R2Binding) =>
       Layer.effect(
@@ -785,65 +796,62 @@ export class R2 extends ServiceMap.Service<
         // Type assertion is safe: we provide an R2-compatible service with
         // schema-validated types (A instead of R2Object). The Layer system
         // handles this correctly at runtime since the shape is identical.
-        R2.json(schema).make(binding) as unknown as ReturnType<typeof R2.make>,
+        R2.json(schema).make(binding) as unknown as ReturnType<typeof R2.make>
       ),
-  })
+  });
 }
 
 // ── AWS Signature V4 Implementation ─────────────────────────────────────
 
-const ALGORITHM = "AWS4-HMAC-SHA256"
-const SERVICE = "s3"
-const REGION = "auto"
+const ALGORITHM = "AWS4-HMAC-SHA256";
+const SERVICE = "s3";
+const REGION = "auto";
 
 // Helper to convert ArrayBuffer to hex string
 const toHex = (buffer: ArrayBuffer): string => {
-  const bytes = new Uint8Array(buffer)
+  const bytes = new Uint8Array(buffer);
   return Array.from(bytes)
     .map((b) => b.toString(16).padStart(2, "0"))
-    .join("")
-}
+    .join("");
+};
 
 // HMAC-SHA256 using Web Crypto API
 const hmacSha256 = async (
   key: ArrayBuffer | Uint8Array,
-  message: string,
+  message: string
 ): Promise<ArrayBuffer> => {
   const cryptoKey = await crypto.subtle.importKey(
     "raw",
     key,
     { name: "HMAC", hash: "SHA-256" },
     false,
-    ["sign"],
-  )
-  const encoder = new TextEncoder()
-  return crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(message))
-}
+    ["sign"]
+  );
+  const encoder = new TextEncoder();
+  return crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(message));
+};
 
 // Get signature key for AWS Signature V4
 const getSignatureKey = async (
   secretKey: string,
   dateStamp: string,
   region: string,
-  service: string,
+  service: string
 ): Promise<ArrayBuffer> => {
-  const encoder = new TextEncoder()
-  const kDate = await hmacSha256(
-    encoder.encode(`AWS4${secretKey}`),
-    dateStamp,
-  )
-  const kRegion = await hmacSha256(kDate, region)
-  const kService = await hmacSha256(kRegion, service)
-  const kSigning = await hmacSha256(kService, "aws4_request")
-  return kSigning
-}
+  const encoder = new TextEncoder();
+  const kDate = await hmacSha256(encoder.encode(`AWS4${secretKey}`), dateStamp);
+  const kRegion = await hmacSha256(kDate, region);
+  const kService = await hmacSha256(kRegion, service);
+  const kSigning = await hmacSha256(kService, "aws4_request");
+  return kSigning;
+};
 
 // SHA256 hash
 const sha256Hash = async (message: string): Promise<string> => {
-  const encoder = new TextEncoder()
-  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(message))
-  return toHex(hash)
-}
+  const encoder = new TextEncoder();
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(message));
+  return toHex(hash);
+};
 
 /**
  * Generate AWS Signature V4 presigned URL for R2.
@@ -852,56 +860,55 @@ const sha256Hash = async (message: string): Promise<string> => {
 const generatePresignedUrl = async (
   config: R2PresignConfig,
   options: {
-    key: string
-    method: "GET" | "PUT" | "DELETE" | "HEAD"
-    expiresIn?: number
-    contentType?: string
-  },
+    key: string;
+    method: "GET" | "PUT" | "DELETE" | "HEAD";
+    expiresIn?: number;
+    contentType?: string;
+  }
 ): Promise<string> => {
-  const { accessKeyId, secretAccessKey, accountId, bucketName } = config
-  const { key, method, expiresIn = 3600, contentType } = options
+  const { accessKeyId, secretAccessKey, accountId, bucketName } = config;
+  const { key, method, expiresIn = 3600, contentType } = options;
 
   // Generate timestamps
-  const now = new Date()
-  const dateStamp = now.toISOString().slice(0, 10).replace(/-/g, "")
-  const amzDate =
-    now.toISOString().replace(/[:-]|\..*/g, "") + "Z"
+  const now = new Date();
+  const dateStamp = now.toISOString().slice(0, 10).replace(/-/g, "");
+  const amzDate = `${now.toISOString().replace(/[:-]|\..*/g, "")}Z`;
 
   // Build the canonical request
-  const host = `${bucketName}.${accountId}.r2.cloudflarestorage.com`
-  const encodedKey = encodeURIComponent(key).replace(/%2F/g, "/")
+  const host = `${bucketName}.${accountId}.r2.cloudflarestorage.com`;
+  const encodedKey = encodeURIComponent(key).replace(/%2F/g, "/");
 
   // Build query parameters
+  const methodToAction: Record<"GET" | "PUT" | "DELETE" | "HEAD", string> = {
+    GET: "GetObject",
+    PUT: "PutObject",
+    DELETE: "DeleteObject",
+    HEAD: "HeadObject",
+  };
+
   const queryParams = new URLSearchParams({
     "X-Amz-Algorithm": ALGORITHM,
     "X-Amz-Credential": `${accessKeyId}/${dateStamp}/${REGION}/${SERVICE}/aws4_request`,
     "X-Amz-Date": amzDate,
     "X-Amz-Expires": expiresIn.toString(),
     "X-Amz-SignedHeaders": "host",
-    "x-id":
-      method === "GET"
-        ? "GetObject"
-        : method === "PUT"
-          ? "PutObject"
-          : method === "DELETE"
-            ? "DeleteObject"
-            : "HeadObject",
-  })
+    "x-id": methodToAction[method],
+  });
 
   // Add content-type to signed headers if provided (for PUT)
-  let signedHeaders = "host"
-  let canonicalHeaders = `host:${host}\n`
+  let signedHeaders = "host";
+  let canonicalHeaders = `host:${host}\n`;
 
   if (contentType && method === "PUT") {
-    signedHeaders = "content-type;host"
-    canonicalHeaders = `content-type:${contentType}\nhost:${host}\n`
-    queryParams.set("X-Amz-SignedHeaders", signedHeaders)
+    signedHeaders = "content-type;host";
+    canonicalHeaders = `content-type:${contentType}\nhost:${host}\n`;
+    queryParams.set("X-Amz-SignedHeaders", signedHeaders);
   }
 
   // Canonical request components
-  const canonicalUri = `/${encodedKey}`
-  const canonicalQueryString = queryParams.toString()
-  const payloadHash = "UNSIGNED-PAYLOAD"
+  const canonicalUri = `/${encodedKey}`;
+  const canonicalQueryString = queryParams.toString();
+  const payloadHash = "UNSIGNED-PAYLOAD";
 
   const canonicalRequest = [
     method,
@@ -910,31 +917,31 @@ const generatePresignedUrl = async (
     canonicalHeaders,
     signedHeaders,
     payloadHash,
-  ].join("\n")
+  ].join("\n");
 
   // Create string to sign
-  const credentialScope = `${dateStamp}/${REGION}/${SERVICE}/aws4_request`
+  const credentialScope = `${dateStamp}/${REGION}/${SERVICE}/aws4_request`;
   const stringToSign = [
     ALGORITHM,
     amzDate,
     credentialScope,
     await sha256Hash(canonicalRequest),
-  ].join("\n")
+  ].join("\n");
 
   // Calculate signature
   const signingKey = await getSignatureKey(
     secretAccessKey,
     dateStamp,
     REGION,
-    SERVICE,
-  )
-  const signature = toHex(await hmacSha256(signingKey, stringToSign))
+    SERVICE
+  );
+  const signature = toHex(await hmacSha256(signingKey, stringToSign));
 
   // Build final URL
-  const finalUrl = `https://${host}${canonicalUri}?${canonicalQueryString}&X-Amz-Signature=${signature}`
+  const finalUrl = `https://${host}${canonicalUri}?${canonicalQueryString}&X-Amz-Signature=${signature}`;
 
-  return finalUrl
-}
+  return finalUrl;
+};
 
 // ── Task 7.9: R2Map LayerMap for Multi-Instance ─────────────────────────
 
@@ -976,11 +983,11 @@ export class R2Map extends LayerMap.Service<R2Map>()(
       Layer.effect(
         R2,
         Effect.gen(function* () {
-          const env = yield* WorkerEnv
-          const binding = env[name] as R2Binding
-          return yield* R2.make(binding)
-        }),
+          const env = yield* WorkerEnv;
+          const binding = env[name] as R2Binding;
+          return yield* R2.make(binding);
+        })
       ),
     idleTimeToLive: "5 minutes",
-  },
+  }
 ) {}

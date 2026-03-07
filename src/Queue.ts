@@ -20,19 +20,19 @@ import { WorkerEnv } from "./Worker.js";
  * const binding: QueueBinding = Testing.memoryQueue()
  * ```
  */
-export type QueueBinding<T = unknown> = {
-	send(
-		message: T,
-		options?: { contentType?: string; delaySeconds?: number },
-	): Promise<void>;
-	sendBatch(
-		messages: ReadonlyArray<{
-			body: T;
-			contentType?: string;
-			delaySeconds?: number;
-		}>,
-	): Promise<void>;
-};
+export interface QueueBinding<T = unknown> {
+  send(
+    message: T,
+    options?: { contentType?: string; delaySeconds?: number }
+  ): Promise<void>;
+  sendBatch(
+    messages: ReadonlyArray<{
+      body: T;
+      contentType?: string;
+      delaySeconds?: number;
+    }>
+  ): Promise<void>;
+}
 
 // ── Errors ──────────────────────────────────────────────────────────────
 
@@ -52,9 +52,9 @@ export type QueueBinding<T = unknown> = {
  * ```
  */
 export class QueueError extends Data.TaggedError("QueueError")<{
-	readonly operation: string;
-	readonly message: string;
-	readonly cause?: unknown;
+  readonly operation: string;
+  readonly message: string;
+  readonly cause?: unknown;
 }> {}
 
 /**
@@ -73,9 +73,9 @@ export class QueueError extends Data.TaggedError("QueueError")<{
  * ```
  */
 export class QueueSendError extends Data.TaggedError("QueueSendError")<{
-	readonly operation: "send" | "sendBatch";
-	readonly messageCount: number;
-	readonly cause: unknown;
+  readonly operation: "send" | "sendBatch";
+  readonly messageCount: number;
+  readonly cause: unknown;
 }> {}
 
 /**
@@ -94,9 +94,9 @@ export class QueueSendError extends Data.TaggedError("QueueSendError")<{
  * ```
  */
 export class QueueConsumerError extends Data.TaggedError("QueueConsumerError")<{
-	readonly batchSize: number;
-	readonly message: string;
-	readonly cause?: unknown;
+  readonly batchSize: number;
+  readonly message: string;
+  readonly cause?: unknown;
 }> {}
 
 // ── Options & Result types ──────────────────────────────────────────────
@@ -113,17 +113,17 @@ export class QueueConsumerError extends Data.TaggedError("QueueConsumerError")<{
  * ```
  */
 export interface QueueSendOptions {
-	/**
-	 * MIME type of the message content.
-	 * @default "text/plain"
-	 */
-	readonly contentType?: string;
+  /**
+   * MIME type of the message content.
+   * @default "text/plain"
+   */
+  readonly contentType?: string;
 
-	/**
-	 * Delay in seconds before the message becomes visible.
-	 * Maximum value is 43200 (12 hours).
-	 */
-	readonly delaySeconds?: number;
+  /**
+   * Delay in seconds before the message becomes visible.
+   * Maximum value is 43200 (12 hours).
+   */
+  readonly delaySeconds?: number;
 }
 
 /**
@@ -139,22 +139,22 @@ export interface QueueSendOptions {
  * ```
  */
 export interface QueueBatchMessage<T> {
-	/**
-	 * Message body.
-	 */
-	readonly body: T;
+  /**
+   * Message body.
+   */
+  readonly body: T;
 
-	/**
-	 * MIME type of the message content.
-	 * @default "text/plain"
-	 */
-	readonly contentType?: string;
+  /**
+   * MIME type of the message content.
+   * @default "text/plain"
+   */
+  readonly contentType?: string;
 
-	/**
-	 * Delay in seconds before the message becomes visible.
-	 * Maximum value is 43200 (12 hours).
-	 */
-	readonly delaySeconds?: number;
+  /**
+   * Delay in seconds before the message becomes visible.
+   * Maximum value is 43200 (12 hours).
+   */
+  readonly delaySeconds?: number;
 }
 
 // ── QueueProducer service ───────────────────────────────────────────────
@@ -186,222 +186,222 @@ export interface QueueBatchMessage<T> {
  * @see {@link QueueProducer.json} for schema-validated variant
  */
 export class QueueProducer extends ServiceMap.Service<
-	QueueProducer,
-	{
-		readonly send: (
-			message: unknown,
-			options?: QueueSendOptions,
-		) => Effect.Effect<void, QueueSendError>;
-		readonly sendBatch: (
-			messages: ReadonlyArray<QueueBatchMessage<unknown>>,
-		) => Effect.Effect<void, QueueSendError>;
-	}
+  QueueProducer,
+  {
+    readonly send: (
+      message: unknown,
+      options?: QueueSendOptions
+    ) => Effect.Effect<void, QueueSendError>;
+    readonly sendBatch: (
+      messages: readonly QueueBatchMessage<unknown>[]
+    ) => Effect.Effect<void, QueueSendError>;
+  }
 >()("effectful-cloudflare/QueueProducer") {
-	/**
-	 * Create a QueueProducer service from a binding.
-	 *
-	 * This static method wraps all Queue producer operations in Effect programs with:
-	 * - Automatic error handling via `Effect.tryPromise`
-	 * - Typed errors (`QueueSendError`)
-	 * - Automatic tracing spans via `Effect.fn`
-	 *
-	 * @param binding - Queue binding from worker environment
-	 * @returns Effect that yields the QueueProducer service
-	 *
-	 * @example
-	 * ```ts
-	 * const program = Effect.gen(function*() {
-	 *   const producer = yield* QueueProducer.make(env.MY_QUEUE)
-	 *   yield* producer.send("Hello, Queue!")
-	 * })
-	 * ```
-	 */
-	static make = (binding: QueueBinding) =>
-		Effect.gen(function* () {
-			const send = Effect.fn("QueueProducer.send")(function* (
-				message: unknown,
-				options?: QueueSendOptions,
-			) {
-				return yield* Effect.tryPromise({
-					try: () => binding.send(message, options),
-					catch: (cause) =>
-						new QueueSendError({
-							operation: "send",
-							messageCount: 1,
-							cause,
-						}),
-				});
-			});
+  /**
+   * Create a QueueProducer service from a binding.
+   *
+   * This static method wraps all Queue producer operations in Effect programs with:
+   * - Automatic error handling via `Effect.tryPromise`
+   * - Typed errors (`QueueSendError`)
+   * - Automatic tracing spans via `Effect.fn`
+   *
+   * @param binding - Queue binding from worker environment
+   * @returns Effect that yields the QueueProducer service
+   *
+   * @example
+   * ```ts
+   * const program = Effect.gen(function*() {
+   *   const producer = yield* QueueProducer.make(env.MY_QUEUE)
+   *   yield* producer.send("Hello, Queue!")
+   * })
+   * ```
+   */
+  static make = (binding: QueueBinding) =>
+    Effect.gen(function* () {
+      const send = Effect.fn("QueueProducer.send")(function* (
+        message: unknown,
+        options?: QueueSendOptions
+      ) {
+        return yield* Effect.tryPromise({
+          try: () => binding.send(message, options),
+          catch: (cause) =>
+            new QueueSendError({
+              operation: "send",
+              messageCount: 1,
+              cause,
+            }),
+        });
+      });
 
-			const sendBatch = Effect.fn("QueueProducer.sendBatch")(function* (
-				messages: ReadonlyArray<QueueBatchMessage<unknown>>,
-			) {
-				return yield* Effect.tryPromise({
-					try: () => binding.sendBatch(messages),
-					catch: (cause) =>
-						new QueueSendError({
-							operation: "sendBatch",
-							messageCount: messages.length,
-							cause,
-						}),
-				});
-			});
+      const sendBatch = Effect.fn("QueueProducer.sendBatch")(function* (
+        messages: readonly QueueBatchMessage<unknown>[]
+      ) {
+        return yield* Effect.tryPromise({
+          try: () => binding.sendBatch(messages),
+          catch: (cause) =>
+            new QueueSendError({
+              operation: "sendBatch",
+              messageCount: messages.length,
+              cause,
+            }),
+        });
+      });
 
-			return {
-				send,
-				sendBatch,
-			};
-		});
+      return {
+        send,
+        sendBatch,
+      };
+    });
 
-	/**
-	 * Create a Layer from a Queue binding.
-	 *
-	 * This is the standard way to provide QueueProducer service to Effect programs.
-	 *
-	 * @param binding - Queue binding from worker environment
-	 * @returns Layer providing QueueProducer service
-	 *
-	 * @example
-	 * ```ts
-	 * const layer = QueueProducer.layer(env.MY_QUEUE)
-	 *
-	 * const program = Effect.gen(function*() {
-	 *   const queue = yield* QueueProducer
-	 *   yield* queue.send("Hello, Queue!")
-	 * }).pipe(Effect.provide(layer))
-	 * ```
-	 */
-	static layer = (binding: QueueBinding) =>
-		Layer.effect(this, this.make(binding));
+  /**
+   * Create a Layer from a Queue binding.
+   *
+   * This is the standard way to provide QueueProducer service to Effect programs.
+   *
+   * @param binding - Queue binding from worker environment
+   * @returns Layer providing QueueProducer service
+   *
+   * @example
+   * ```ts
+   * const layer = QueueProducer.layer(env.MY_QUEUE)
+   *
+   * const program = Effect.gen(function*() {
+   *   const queue = yield* QueueProducer
+   *   yield* queue.send("Hello, Queue!")
+   * }).pipe(Effect.provide(layer))
+   * ```
+   */
+  static layer = (binding: QueueBinding) =>
+    Layer.effect(this, this.make(binding));
 
-	/**
-	 * Create schema-validated QueueProducer variant (JSON mode).
-	 *
-	 * Returns a factory with `make` and `layer` methods that automatically:
-	 * - Encode messages to JSON before sending
-	 * - Validate against the provided schema
-	 * - Add `SchemaError` to the error channel
-	 *
-	 * @param schema - Schema.Schema for encoding messages
-	 * @returns Factory with `make` and `layer` methods
-	 *
-	 * @example
-	 * ```ts
-	 * const TaskSchema = Schema.Struct({
-	 *   id: Schema.String,
-	 *   type: Schema.Literal("email", "webhook"),
-	 *   payload: Schema.Record(Schema.String, Schema.Unknown),
-	 * })
-	 * type Task = Schema.Schema.Type<typeof TaskSchema>
-	 *
-	 * const taskQueue = QueueProducer.json(TaskSchema)
-	 * const layer = taskQueue.layer(env.TASKS_QUEUE)
-	 *
-	 * const program = Effect.gen(function*() {
-	 *   const queue = yield* QueueProducer
-	 *   // Fully typed - accepts Task
-	 *   yield* queue.send({
-	 *     id: "task-1",
-	 *     type: "email",
-	 *     payload: { to: "user@example.com" }
-	 *   })
-	 * }).pipe(Effect.provide(layer))
-	 * ```
-	 */
-	static json = <A>(schema: Schema.Schema<A>) => ({
-		make: (binding: QueueBinding) =>
-			Effect.gen(function* () {
-				const baseProducer = yield* QueueProducer.make(binding);
+  /**
+   * Create schema-validated QueueProducer variant (JSON mode).
+   *
+   * Returns a factory with `make` and `layer` methods that automatically:
+   * - Encode messages to JSON before sending
+   * - Validate against the provided schema
+   * - Add `SchemaError` to the error channel
+   *
+   * @param schema - Schema.Schema for encoding messages
+   * @returns Factory with `make` and `layer` methods
+   *
+   * @example
+   * ```ts
+   * const TaskSchema = Schema.Struct({
+   *   id: Schema.String,
+   *   type: Schema.Literal("email", "webhook"),
+   *   payload: Schema.Record(Schema.String, Schema.Unknown),
+   * })
+   * type Task = Schema.Schema.Type<typeof TaskSchema>
+   *
+   * const taskQueue = QueueProducer.json(TaskSchema)
+   * const layer = taskQueue.layer(env.TASKS_QUEUE)
+   *
+   * const program = Effect.gen(function*() {
+   *   const queue = yield* QueueProducer
+   *   // Fully typed - accepts Task
+   *   yield* queue.send({
+   *     id: "task-1",
+   *     type: "email",
+   *     payload: { to: "user@example.com" }
+   *   })
+   * }).pipe(Effect.provide(layer))
+   * ```
+   */
+  static json = <A>(schema: Schema.Schema<A>) => ({
+    make: (binding: QueueBinding) =>
+      Effect.gen(function* () {
+        const baseProducer = yield* QueueProducer.make(binding);
 
-				const send = Effect.fn("QueueProducer.json.send")(function* (
-					message: A,
-					options?: QueueSendOptions,
-				) {
-					const encoded = yield* Schema.encodeEffect(schema)(message).pipe(
-						Effect.mapError(
-							(cause) =>
-								new Errors.SchemaError({
-									message: "Schema encoding failed for queue message",
-									cause: cause as Error,
-								}),
-						),
-					);
+        const send = Effect.fn("QueueProducer.json.send")(function* (
+          message: A,
+          options?: QueueSendOptions
+        ) {
+          const encoded = yield* Schema.encodeEffect(schema)(message).pipe(
+            Effect.mapError(
+              (cause) =>
+                new Errors.SchemaError({
+                  message: "Schema encoding failed for queue message",
+                  cause: cause as Error,
+                })
+            )
+          );
 
-					const json = yield* Effect.try({
-						try: () => JSON.stringify(encoded),
-						catch: (cause) =>
-							new Errors.SchemaError({
-								message: "Failed to stringify JSON for queue message",
-								cause: cause as Error,
-							}),
-					});
+          const json = yield* Effect.try({
+            try: () => JSON.stringify(encoded),
+            catch: (cause) =>
+              new Errors.SchemaError({
+                message: "Failed to stringify JSON for queue message",
+                cause: cause as Error,
+              }),
+          });
 
-					return yield* baseProducer.send(json, {
-						...options,
-						contentType: "application/json",
-					});
-				});
+          return yield* baseProducer.send(json, {
+            ...options,
+            contentType: "application/json",
+          });
+        });
 
-				const sendBatch = Effect.fn("QueueProducer.json.sendBatch")(
-					function* (messages: ReadonlyArray<QueueBatchMessage<A>>) {
-						// Encode each message
-						const encodedMessages = yield* Effect.forEach(
-							messages,
-							(msg) =>
-								Effect.gen(function* () {
-									const encoded = yield* Schema.encodeEffect(schema)(
-										msg.body,
-									).pipe(
-										Effect.mapError(
-											(cause) =>
-												new Errors.SchemaError({
-													message: "Schema encoding failed for batch message",
-													cause: cause as Error,
-												}),
-										),
-									);
+        const sendBatch = Effect.fn("QueueProducer.json.sendBatch")(function* (
+          messages: readonly QueueBatchMessage<A>[]
+        ) {
+          // Encode each message
+          const encodedMessages = yield* Effect.forEach(
+            messages,
+            (msg) =>
+              Effect.gen(function* () {
+                const encoded = yield* Schema.encodeEffect(schema)(
+                  msg.body
+                ).pipe(
+                  Effect.mapError(
+                    (cause) =>
+                      new Errors.SchemaError({
+                        message: "Schema encoding failed for batch message",
+                        cause: cause as Error,
+                      })
+                  )
+                );
 
-									const json = yield* Effect.try({
-										try: () => JSON.stringify(encoded),
-										catch: (cause) =>
-											new Errors.SchemaError({
-												message: "Failed to stringify JSON for batch message",
-												cause: cause as Error,
-											}),
-									});
+                const json = yield* Effect.try({
+                  try: () => JSON.stringify(encoded),
+                  catch: (cause) =>
+                    new Errors.SchemaError({
+                      message: "Failed to stringify JSON for batch message",
+                      cause: cause as Error,
+                    }),
+                });
 
-									return {
-										body: json,
-										contentType: "application/json",
-										...(msg.delaySeconds !== undefined && {
-											delaySeconds: msg.delaySeconds,
-										}),
-									};
-								}),
-							{ concurrency: "unbounded" },
-						);
+                return {
+                  body: json,
+                  contentType: "application/json",
+                  ...(msg.delaySeconds !== undefined && {
+                    delaySeconds: msg.delaySeconds,
+                  }),
+                };
+              }),
+            { concurrency: "unbounded" }
+          );
 
-						return yield* baseProducer.sendBatch(encodedMessages);
-					},
-				);
+          return yield* baseProducer.sendBatch(encodedMessages);
+        });
 
-				// Return service with typed methods
-				return {
-					send,
-					sendBatch,
-				};
-			}),
-		layer: (binding: QueueBinding) =>
-			Layer.effect(
-				QueueProducer,
-				// Type assertion is safe: we provide a QueueProducer-compatible service
-				// with schema-validated types (A instead of unknown). The Layer system
-				// handles this correctly at runtime since the shape is identical.
-				QueueProducer.json(schema).make(binding) as unknown as ReturnType<
-					typeof QueueProducer.make
-				>,
-			),
-	});
+        // Return service with typed methods
+        return {
+          send,
+          sendBatch,
+        };
+      }),
+    layer: (binding: QueueBinding) =>
+      Layer.effect(
+        QueueProducer,
+        // Type assertion is safe: we provide a QueueProducer-compatible service
+        // with schema-validated types (A instead of unknown). The Layer system
+        // handles this correctly at runtime since the shape is identical.
+        QueueProducer.json(schema).make(binding) as unknown as ReturnType<
+          typeof QueueProducer.make
+        >
+      ),
+  });
 }
 
 // ── Consumer types ──────────────────────────────────────────────────────
@@ -421,20 +421,19 @@ export class QueueProducer extends ServiceMap.Service<
  * ```
  */
 export interface QueueMessageMetadata {
-	/**
-	 * Unique message identifier.
-	 */
-	readonly id: string;
+  /**
+   * Number of delivery attempts (including current attempt).
+   */
+  readonly attempts: number;
+  /**
+   * Unique message identifier.
+   */
+  readonly id: string;
 
-	/**
-	 * Timestamp when the message was sent to the queue.
-	 */
-	readonly timestamp: Date;
-
-	/**
-	 * Number of delivery attempts (including current attempt).
-	 */
-	readonly attempts: number;
+  /**
+   * Timestamp when the message was sent to the queue.
+   */
+  readonly timestamp: Date;
 }
 
 /**
@@ -448,13 +447,13 @@ export interface QueueMessageMetadata {
  * ```
  */
 export interface QueueConsumerOptions<A> {
-	/**
-	 * Optional schema for decoding message bodies.
-	 * If provided, messages will be parsed as JSON and validated against the schema.
-	 *
-	 * Accepts any `Schema.Schema<A>` — concrete schemas like `Schema.Struct(...)` work directly.
-	 */
-	readonly schema?: Schema.Schema<A>;
+  /**
+   * Optional schema for decoding message bodies.
+   * If provided, messages will be parsed as JSON and validated against the schema.
+   *
+   * Accepts any `Schema.Schema<A>` — concrete schemas like `Schema.Struct(...)` work directly.
+   */
+  readonly schema?: Schema.Schema<A>;
 }
 
 /**
@@ -472,22 +471,21 @@ export interface QueueConsumerOptions<A> {
  * ```
  */
 export interface QueueConsumerWithLayersOptions<A, R> {
-	/**
-	 * Optional schema for decoding message bodies.
-	 * If provided, messages will be parsed as JSON and validated against the schema.
-	 *
-	 * Accepts any `Schema.Schema<A>` — concrete schemas like `Schema.Struct(...)` work directly.
-	 */
-	readonly schema?: Schema.Schema<A>;
-
-	/**
-	 * Layer factory that creates layers from the worker environment and execution context.
-	 * When provided, the handler can use Effect services.
-	 */
-	readonly layers: (
-		env: Record<string, unknown>,
-		ctx: ExecutionContext,
-	) => Layer.Layer<R>;
+  /**
+   * Layer factory that creates layers from the worker environment and execution context.
+   * When provided, the handler can use Effect services.
+   */
+  readonly layers: (
+    env: Record<string, unknown>,
+    ctx: ExecutionContext
+  ) => Layer.Layer<R>;
+  /**
+   * Optional schema for decoding message bodies.
+   * If provided, messages will be parsed as JSON and validated against the schema.
+   *
+   * Accepts any `Schema.Schema<A>` — concrete schemas like `Schema.Struct(...)` work directly.
+   */
+  readonly schema?: Schema.Schema<A>;
 }
 
 // ── Internal helpers ────────────────────────────────────────────────────
@@ -502,36 +500,36 @@ export interface QueueConsumerWithLayersOptions<A, R> {
  * @internal
  */
 const decodeMessage = <A>(
-	msg: Message<unknown>,
-	batchSize: number,
-	schema?: Schema.Schema<A>,
+  msg: Message<unknown>,
+  batchSize: number,
+  schema?: Schema.Schema<A>
 ) => {
-	if (schema) {
-		return Effect.gen(function* () {
-			const parsed = yield* Effect.try({
-				try: () => JSON.parse(msg.body as string),
-				catch: (cause) =>
-					new QueueConsumerError({
-						batchSize,
-						message: `Failed to parse message ${msg.id} as JSON`,
-						cause,
-					}),
-			});
+  if (schema) {
+    return Effect.gen(function* () {
+      const parsed = yield* Effect.try({
+        try: () => JSON.parse(msg.body as string),
+        catch: (cause) =>
+          new QueueConsumerError({
+            batchSize,
+            message: `Failed to parse message ${msg.id} as JSON`,
+            cause,
+          }),
+      });
 
-			return yield* Schema.decodeUnknownEffect(schema)(parsed).pipe(
-				Effect.mapError(
-					(cause) =>
-						new QueueConsumerError({
-							batchSize,
-							message: `Schema validation failed for message ${msg.id}`,
-							cause,
-						}),
-				),
-			);
-		}) as Effect.Effect<A, QueueConsumerError>;
-	}
+      return yield* Schema.decodeUnknownEffect(schema)(parsed).pipe(
+        Effect.mapError(
+          (cause) =>
+            new QueueConsumerError({
+              batchSize,
+              message: `Schema validation failed for message ${msg.id}`,
+              cause,
+            })
+        )
+      );
+    }) as Effect.Effect<A, QueueConsumerError>;
+  }
 
-	return Effect.succeed(msg.body as A) as Effect.Effect<A, QueueConsumerError>;
+  return Effect.succeed(msg.body as A) as Effect.Effect<A, QueueConsumerError>;
 };
 
 /**
@@ -539,9 +537,9 @@ const decodeMessage = <A>(
  * @internal
  */
 const messageMetadata = (msg: Message<unknown>): QueueMessageMetadata => ({
-	id: msg.id,
-	timestamp: msg.timestamp,
-	attempts: msg.attempts,
+  id: msg.id,
+  timestamp: msg.timestamp,
+  attempts: msg.attempts,
 });
 
 // ── Consumer handler ────────────────────────────────────────────────────
@@ -618,80 +616,72 @@ const messageMetadata = (msg: Message<unknown>): QueueMessageMetadata => ({
  * ```
  */
 export function consume<A, R>(
-	options: QueueConsumerWithLayersOptions<A, R>,
+  options: QueueConsumerWithLayersOptions<A, R>
 ): {
-	handler: (
-		fn: (
-			message: A,
-			metadata: QueueMessageMetadata,
-		) => Effect.Effect<void, unknown, R>,
-	) => Pick<ExportedHandler, "queue">;
+  handler: (
+    fn: (
+      message: A,
+      metadata: QueueMessageMetadata
+    ) => Effect.Effect<void, unknown, R>
+  ) => Pick<ExportedHandler, "queue">;
 };
 export function consume<A = unknown>(
-	options?: QueueConsumerOptions<A>,
+  options?: QueueConsumerOptions<A>
 ): {
-	handler: (
-		fn: (
-			message: A,
-			metadata: QueueMessageMetadata,
-		) => Effect.Effect<void>,
-	) => Pick<ExportedHandler, "queue">;
+  handler: (
+    fn: (message: A, metadata: QueueMessageMetadata) => Effect.Effect<void>
+  ) => Pick<ExportedHandler, "queue">;
 };
 export function consume<A = unknown, R = never>(
-	options?:
-		| QueueConsumerOptions<A>
-		| QueueConsumerWithLayersOptions<A, R>,
+  options?: QueueConsumerOptions<A> | QueueConsumerWithLayersOptions<A, R>
 ) {
-	return {
-		handler: (
-			fn: (
-				message: A,
-				metadata: QueueMessageMetadata,
-			) => Effect.Effect<void, unknown, R>,
-		): Pick<ExportedHandler, "queue"> => ({
-			queue: async (batch, env, ctx) => {
-				for (const msg of batch.messages) {
-					const metadata = messageMetadata(msg);
+  return {
+    handler: (
+      fn: (
+        message: A,
+        metadata: QueueMessageMetadata
+      ) => Effect.Effect<void, unknown, R>
+    ): Pick<ExportedHandler, "queue"> => ({
+      queue: async (batch, env, ctx) => {
+        for (const msg of batch.messages) {
+          const metadata = messageMetadata(msg);
 
-					const processMessage = Effect.fn("Queue.consume.processMessage")(
-						function* () {
-							const decoded = yield* decodeMessage(
-								msg,
-								batch.messages.length,
-								options?.schema,
-							);
+          const processMessage = Effect.fn("Queue.consume.processMessage")(
+            function* () {
+              const decoded = yield* decodeMessage(
+                msg,
+                batch.messages.length,
+                options?.schema
+              );
 
-							yield* fn(decoded, metadata);
+              yield* fn(decoded, metadata);
 
-							yield* Effect.sync(() => msg.ack());
-						},
-					);
+              yield* Effect.sync(() => msg.ack());
+            }
+          );
 
-					// Run per-message — provide layers if configured, then execute
-					const runMessage = async () => {
-						if (options && "layers" in options && options.layers) {
-							const layer = options.layers(
-								env as Record<string, unknown>,
-								ctx,
-							);
-							return Effect.runPromiseExit(
-								processMessage().pipe(Effect.provide(layer)),
-							);
-						}
-						return Effect.runPromiseExit(
-							processMessage() as Effect.Effect<void, unknown>,
-						);
-					};
+          // Run per-message — provide layers if configured, then execute
+          const runMessage = () => {
+            if (options && "layers" in options && options.layers) {
+              const layer = options.layers(env as Record<string, unknown>, ctx);
+              return Effect.runPromiseExit(
+                processMessage().pipe(Effect.provide(layer))
+              );
+            }
+            return Effect.runPromiseExit(
+              processMessage() as Effect.Effect<void, unknown>
+            );
+          };
 
-					const result = await runMessage();
+          const result = await runMessage();
 
-					if (result._tag === "Failure") {
-						msg.retry();
-					}
-				}
-			},
-		}),
-	};
+          if (result._tag === "Failure") {
+            msg.retry();
+          }
+        }
+      },
+    }),
+  };
 }
 
 // ── consumeEffect — Effect-based batch handler ──────────────────────────
@@ -756,50 +746,51 @@ export function consume<A = unknown, R = never>(
  * ```
  */
 export const consumeEffect = <A = unknown>(
-	options?: QueueConsumerOptions<A>,
+  options?: QueueConsumerOptions<A>
 ) => ({
-	handler: <E, R>(
-		fn: (
-			message: A,
-			metadata: QueueMessageMetadata,
-		) => Effect.Effect<void, E, R>,
-	): ((batch: MessageBatch<unknown>) => Effect.Effect<void, never, R>) =>
-		(batch: MessageBatch<unknown>) =>
-			Effect.fn("Queue.consumeEffect.processBatch")(function* () {
-				for (const msg of batch.messages) {
-					const metadata = messageMetadata(msg);
+  handler:
+    <E, R>(
+      fn: (
+        message: A,
+        metadata: QueueMessageMetadata
+      ) => Effect.Effect<void, E, R>
+    ): ((batch: MessageBatch<unknown>) => Effect.Effect<void, never, R>) =>
+    (batch: MessageBatch<unknown>) =>
+      Effect.fn("Queue.consumeEffect.processBatch")(function* () {
+        for (const msg of batch.messages) {
+          const metadata = messageMetadata(msg);
 
-					const processMessage = Effect.fn(
-						"Queue.consumeEffect.processMessage",
-					)(function* () {
-						const decoded = yield* decodeMessage(
-							msg,
-							batch.messages.length,
-							options?.schema,
-						);
+          const processMessage = Effect.fn(
+            "Queue.consumeEffect.processMessage"
+          )(function* () {
+            const decoded = yield* decodeMessage(
+              msg,
+              batch.messages.length,
+              options?.schema
+            );
 
-						yield* fn(decoded, metadata);
+            yield* fn(decoded, metadata);
 
-						yield* Effect.sync(() => msg.ack());
-					});
+            yield* Effect.sync(() => msg.ack());
+          });
 
-					// Run per-message — ack on success, retry on failure.
-					// Errors are caught per-message so one failure doesn't block the batch.
-					// This catchCause is intentional: at the consumer boundary, individual
-					// message failures must be caught to retry the message without crashing
-					// the entire batch.
-					yield* processMessage().pipe(
-						Effect.catchCause((cause) =>
-							Effect.gen(function* () {
-								yield* Effect.logError(
-									`Queue message ${msg.id} failed (attempt ${msg.attempts}), retrying`,
-								).pipe(Effect.annotateLogs("cause", String(cause)));
-								msg.retry();
-							}),
-						),
-					);
-				}
-			})(),
+          // Run per-message — ack on success, retry on failure.
+          // Errors are caught per-message so one failure doesn't block the batch.
+          // This catchCause is intentional: at the consumer boundary, individual
+          // message failures must be caught to retry the message without crashing
+          // the entire batch.
+          yield* processMessage().pipe(
+            Effect.catchCause((cause) =>
+              Effect.gen(function* () {
+                yield* Effect.logError(
+                  `Queue message ${msg.id} failed (attempt ${msg.attempts}), retrying`
+                ).pipe(Effect.annotateLogs("cause", String(cause)));
+                msg.retry();
+              })
+            )
+          );
+        }
+      })(),
 });
 
 // ── QueueProducerMap (LayerMap for multi-queue) ─────────────────────────
@@ -838,27 +829,27 @@ export const consumeEffect = <A = unknown>(
  * ```
  */
 export class QueueProducerMap extends LayerMap.Service<QueueProducerMap>()(
-	"effectful-cloudflare/QueueProducerMap",
-	{
-		lookup: (name: string) =>
-			Layer.effect(
-				QueueProducer,
-				Effect.gen(function* () {
-					const env = yield* WorkerEnv;
-					const binding = env[name] as QueueBinding;
+  "effectful-cloudflare/QueueProducerMap",
+  {
+    lookup: (name: string) =>
+      Layer.effect(
+        QueueProducer,
+        Effect.gen(function* () {
+          const env = yield* WorkerEnv;
+          const binding = env[name] as QueueBinding;
 
-					if (!binding) {
-						return yield* Effect.fail(
-							new Errors.BindingError({
-								service: "QueueProducer",
-								message: `Queue binding "${name}" not found in worker environment`,
-							}),
-						);
-					}
+          if (!binding) {
+            return yield* Effect.fail(
+              new Errors.BindingError({
+                service: "QueueProducer",
+                message: `Queue binding "${name}" not found in worker environment`,
+              })
+            );
+          }
 
-					return yield* QueueProducer.make(binding);
-				}),
-			),
-		idleTimeToLive: "5 minutes",
-	},
+          return yield* QueueProducer.make(binding);
+        })
+      ),
+    idleTimeToLive: "5 minutes",
+  }
 ) {}
