@@ -244,10 +244,12 @@ export class KV extends ServiceMap.Service<
 			) {
 				const value = yield* get(key, options);
 				if (value === null) {
-					return yield* new Errors.NotFoundError({
-						resource: "KV",
-						key,
-					});
+					return yield* Effect.fail(
+						new Errors.NotFoundError({
+							resource: "KV",
+							key,
+						}),
+					);
 				}
 				return value;
 			});
@@ -302,14 +304,14 @@ export class KV extends ServiceMap.Service<
 				});
 			});
 
-			return KV.of({
+			return {
 				get,
 				getOrFail,
 				getWithMetadata,
 				put,
 				delete: del,
 				list,
-			});
+			};
 		});
 
 	/**
@@ -405,10 +407,12 @@ export class KV extends ServiceMap.Service<
 				) {
 					const value = yield* get(key, options);
 					if (value === null) {
-						return yield* new Errors.NotFoundError({
-							resource: "KV",
-							key,
-						});
+						return yield* Effect.fail(
+							new Errors.NotFoundError({
+								resource: "KV",
+								key,
+							}),
+						);
 					}
 					return value;
 				});
