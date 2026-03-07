@@ -1,4 +1,5 @@
 /** biome-ignore-all lint/performance/useTopLevelRegex: Each regex is only used once */
+import type { CacheBinding } from "./Cache.js";
 import type {
   D1Binding,
   D1ExecResult,
@@ -1117,5 +1118,86 @@ export const memoryQueue = (): QueueBinding<unknown> & {
       }
       return Promise.resolve();
     },
+  };
+};
+
+// ── memoryCache ─────────────────────────────────────────────────────────
+
+/**
+ * In-memory Cache implementation for testing.
+ *
+ * Implements the `CacheBinding` structural interface with:
+ * - In-memory Map storage for Response objects
+ * - Keyed by request URL
+ * - Response cloning for safe storage/retrieval
+ *
+ * **Note:** This is a simplified mock for testing. It does NOT implement:
+ * - Cache headers (Cache-Control, Expires, etc.)
+ * - Cache invalidation or TTL
+ * - Vary header handling
+ * - Full CacheQueryOptions support (only accepts the option but doesn't use it)
+ *
+ * @returns CacheBinding compatible with Cache.layer() and Cache.make()
+ *
+ * @example
+ * ```ts
+ * import { it } from "@effect/vitest"
+ * import { Effect } from "effect"
+ * import { Cache } from "./Cache.js"
+ * import { memoryCache } from "./Testing.js"
+ *
+ * it.effect("stores and retrieves cached responses", () =>
+ *   Effect.gen(function*() {
+ *     const cache = yield* Cache
+ *     const response = new Response("Hello World")
+ *     yield* cache.put("https://example.com", response)
+ *     const cached = yield* cache.match("https://example.com")
+ *     expect(cached).not.toBeNull()
+ *     const text = yield* Effect.promise(() => cached!.text())
+ *     expect(text).toBe("Hello World")
+ *   }).pipe(Effect.provide(Cache.layer(memoryCache())))
+ * )
+ * ```
+ */
+export const memoryCache = (): CacheBinding => {
+  const store = new Map<string, Response>();
+
+  // Helper: convert Request | string | URL to cache key
+  const requestKey = (request: Request | string): string => {
+    if (typeof request === "string") {
+      return request;
+    }
+    return request.url;
+  };
+
+  const match = (
+    request: Request | string,
+    _options?: { ignoreMethod?: boolean }
+  ): Promise<Response | undefined> => {
+    const key = requestKey(request);
+    const cached = store.get(key);
+    // Clone the response to avoid consuming the body
+    return Promise.resolve(cached ? cached.clone() : undefined);
+  };
+
+  const put = (request: Request | string, response: Response): Promise<void> => {
+    const key = requestKey(request);
+    // Clone the response to store a copy
+    store.set(key, response.clone());
+    return Promise.resolve();
+  };
+
+  const deleteEntry = (
+    request: Request | string,
+    _options?: { ignoreMethod?: boolean }
+  ): Promise<boolean> => {
+    const key = requestKey(request);
+    return Promise.resolve(store.delete(key));
+  };
+
+  return {
+    match,
+    put,
+    delete: deleteEntry,
   };
 };
