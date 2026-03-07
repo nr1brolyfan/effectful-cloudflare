@@ -1,18 +1,89 @@
 {
   "name": "effectful-cloudflare",
-  "private": true,
-  "version": "0.0.0",
+  "version": "0.1.0",
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
+    "build": "tsup",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "tsup"
+  },
+  "peerDependencies": {
+    "effect": "^4.0.0-beta"
   },
   "devDependencies": {
-    "typescript": "~5.9.3",
-    "vite": "^8.0.0-beta.13"
+    "@cloudflare/workers-types": "^4.20260128.0",
+    "@effect/vitest": "4.0.0-beta.28",
+    "effect": "4.0.0-beta.28",
+    "tsup": "^8.3.5",
+    "typescript": "^5.9.3",
+    "vitest": "^3.0.0"
   },
-  "overrides": {
-    "vite": "^8.0.0-beta.13"
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    },
+    "./KV": {
+      "import": "./dist/KV.js",
+      "types": "./dist/KV.d.ts"
+    },
+    "./D1": {
+      "import": "./dist/D1.js",
+      "types": "./dist/D1.d.ts"
+    },
+    "./R2": {
+      "import": "./dist/R2.js",
+      "types": "./dist/R2.d.ts"
+    },
+    "./Queue": {
+      "import": "./dist/Queue.js",
+      "types": "./dist/Queue.d.ts"
+    },
+    "./DurableObject": {
+      "import": "./dist/DurableObject.js",
+      "types": "./dist/DurableObject.d.ts"
+    },
+    "./Cache": {
+      "import": "./dist/Cache.js",
+      "types": "./dist/Cache.d.ts"
+    },
+    "./AI": {
+      "import": "./dist/AI.js",
+      "types": "./dist/AI.d.ts"
+    },
+    "./AIGateway": {
+      "import": "./dist/AIGateway.js",
+      "types": "./dist/AIGateway.d.ts"
+    },
+    "./Vectorize": {
+      "import": "./dist/Vectorize.js",
+      "types": "./dist/Vectorize.d.ts"
+    },
+    "./Hyperdrive": {
+      "import": "./dist/Hyperdrive.js",
+      "types": "./dist/Hyperdrive.d.ts"
+    },
+    "./Worker": {
+      "import": "./dist/Worker.js",
+      "types": "./dist/Worker.d.ts"
+    },
+    "./Browser": {
+      "import": "./dist/Browser.js",
+      "types": "./dist/Browser.d.ts"
+    },
+    "./Pipeline": {
+      "import": "./dist/Pipeline.js",
+      "types": "./dist/Pipeline.d.ts"
+    },
+    "./Errors": {
+      "import": "./dist/Errors.js",
+      "types": "./dist/Errors.d.ts"
+    },
+    "./Testing": {
+      "import": "./dist/Testing.js",
+      "types": "./dist/Testing.d.ts"
+    }
   }
 }
