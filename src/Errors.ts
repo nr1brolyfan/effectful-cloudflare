@@ -65,3 +65,26 @@ export class SchemaError extends Schema.TaggedErrorClass<SchemaError>()(
 		cause: Schema.Defect,
 	},
 ) {}
+
+/**
+ * Resource not found.
+ *
+ * Serializable domain error for missing resources. Includes `httpApiStatus: 404`
+ * for HTTP API integration. Used by `getOrFail` methods across services.
+ *
+ * @example
+ * ```ts
+ * new NotFoundError({
+ *   resource: "KV",
+ *   key: "user:123"
+ * })
+ * ```
+ */
+export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()(
+	"NotFoundError",
+	{
+		resource: Schema.String,
+		key: Schema.String,
+	},
+	{ httpApiStatus: 404 },
+) {}
