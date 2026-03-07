@@ -1,5 +1,39 @@
-import { Data, Effect, Layer, Schema, ServiceMap } from "effect";
+import { Data, Effect, Layer, LayerMap, Schema, ServiceMap } from "effect";
 import * as Errors from "./Errors.js";
+import { WorkerEnv } from "./Worker.js";
+
+// ── Migration types ────────────────────────────────────────────────────
+
+/**
+ * Database migration definition.
+ *
+ * A migration consists of a unique name (used for tracking) and SQL to execute.
+ * Migrations are applied in order and tracked in the `__migrations` table.
+ *
+ * @example
+ * ```ts
+ * const migrations: Migration[] = [
+ *   {
+ *     name: "001_create_users_table",
+ *     sql: `
+ *       CREATE TABLE users (
+ *         id INTEGER PRIMARY KEY AUTOINCREMENT,
+ *         name TEXT NOT NULL,
+ *         email TEXT UNIQUE NOT NULL
+ *       )
+ *     `
+ *   },
+ *   {
+ *     name: "002_add_users_index",
+ *     sql: "CREATE INDEX idx_users_email ON users(email)"
+ *   }
+ * ]
+ * ```
+ */
+export type Migration = {
+	readonly name: string;
+	readonly sql: string;
+};
 
 // ── Binding types ──────────────────────────────────────────────────────
 
@@ -197,6 +231,9 @@ export class D1 extends ServiceMap.Service<
 			statements: ReadonlyArray<D1PreparedStatement>,
 		) => Effect.Effect<ReadonlyArray<D1Result>, D1Error>;
 		readonly exec: (sql: string) => Effect.Effect<D1ExecResult, D1Error>;
+		readonly migrate: (
+			migrations: ReadonlyArray<Migration>,
+		) => Effect.Effect<void, D1Error | D1MigrationError>;
 	}
 >()("effectful-cloudflare/D1") {
 	/**
@@ -352,6 +389,88 @@ export class D1 extends ServiceMap.Service<
 				);
 			});
 
+			// Migration runner
+			const migrate = Effect.fn("D1.migrate")(function* (
+				migrations: ReadonlyArray<Migration>,
+			) {
+				// Create migrations tracking table if it doesn't exist
+				yield* Effect.tryPromise({
+					try: () =>
+						binding.exec(`
+							CREATE TABLE IF NOT EXISTS __migrations (
+								id INTEGER PRIMARY KEY AUTOINCREMENT,
+								name TEXT UNIQUE NOT NULL,
+								applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+							)
+						`),
+					catch: (cause) =>
+						new D1Error({
+							operation: "migrate",
+							message: `Failed to create migrations table: ${String(cause)}`,
+							cause,
+						}),
+				});
+
+				// Get list of already applied migrations
+				const appliedResult = yield* Effect.tryPromise({
+					try: () =>
+						binding
+							.prepare("SELECT name FROM __migrations ORDER BY applied_at")
+							.all<{ name: string }>(),
+					catch: (cause) =>
+						new D1Error({
+							operation: "migrate",
+							message: `Failed to get applied migrations: ${String(cause)}`,
+							cause,
+						}),
+				});
+
+				if (!appliedResult.success) {
+					return yield* Effect.fail(
+						new D1Error({
+							operation: "migrate",
+							message: "Failed to fetch applied migrations",
+						}),
+					);
+				}
+
+				// Build set of applied migration names
+				const appliedSet = new Set(
+					appliedResult.results.map((row) => row.name),
+				);
+
+				// Apply pending migrations in order
+				for (const migration of migrations) {
+					if (!appliedSet.has(migration.name)) {
+						// Execute migration SQL
+						yield* Effect.tryPromise({
+							try: () => binding.exec(migration.sql),
+							catch: (cause) =>
+								new D1MigrationError({
+									migrationName: migration.name,
+									message: `Migration failed: ${String(cause)}`,
+									cause,
+								}),
+						});
+
+						// Record migration as applied
+						yield* Effect.tryPromise({
+							try: () =>
+								binding
+									.prepare("INSERT INTO __migrations (name) VALUES (?)")
+									.bind(migration.name)
+									.run(),
+							catch: (cause) =>
+								new D1MigrationError({
+									migrationName: migration.name,
+									message: `Failed to record migration: ${String(cause)}`,
+									cause,
+								}),
+						});
+					}
+				}
+			});
+
 			return D1.of({
 				query,
 				querySchema,
@@ -360,6 +479,7 @@ export class D1 extends ServiceMap.Service<
 				queryFirstSchema,
 				batch,
 				exec,
+				migrate,
 			});
 		});
 
@@ -383,3 +503,52 @@ export class D1 extends ServiceMap.Service<
 	 */
 	static layer = (binding: D1Binding) => Layer.effect(this, this.make(binding));
 }
+
+// ── D1Map ──────────────────────────────────────────────────────────────
+
+/**
+ * LayerMap for managing multiple D1 databases dynamically.
+ *
+ * D1Map allows you to access multiple D1 databases by name without
+ * creating layers upfront. It resolves bindings from WorkerEnv on-demand
+ * and caches the resulting layers.
+ *
+ * @example
+ * ```ts
+ * // Define the D1Map layer (typically in your layer composition)
+ * const layers = Layer.mergeAll(
+ *   WorkerEnv.layer(env),
+ *   D1Map.layer
+ * )
+ *
+ * // Use different D1 databases dynamically
+ * const program = Effect.gen(function*() {
+ *   // Access MAIN_DB database
+ *   const mainDB = yield* D1.pipe(
+ *     Effect.provide(D1Map.get("MAIN_DB"))
+ *   )
+ *   const users = yield* mainDB.query("SELECT * FROM users")
+ *
+ *   // Access ANALYTICS_DB database
+ *   const analyticsDB = yield* D1.pipe(
+ *     Effect.provide(D1Map.get("ANALYTICS_DB"))
+ *   )
+ *   const events = yield* analyticsDB.query("SELECT * FROM events")
+ * })
+ * ```
+ */
+export class D1Map extends LayerMap.Service<D1Map>()(
+	"effectful-cloudflare/D1Map",
+	{
+		lookup: (name: string) =>
+			Layer.effect(
+				D1,
+				Effect.gen(function* () {
+					const env = yield* WorkerEnv;
+					const binding = env[name] as D1Binding;
+					return yield* D1.make(binding);
+				}),
+			),
+		idleTimeToLive: "5 minutes",
+	},
+) {}
