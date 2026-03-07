@@ -1,6 +1,6 @@
 // ── src/R2.ts ──────────────────────────────────────────────────────────
 
-import { Data } from "effect"
+import { Data, Schema } from "effect"
 
 // ── Task 7.1: R2Binding structural type ────────────────────────────────
 
@@ -278,8 +278,9 @@ export type R2PresignConfig = {
 
 // ── Task 7.4: R2 Service Class ──────────────────────────────────────────
 
-import { Effect, Layer, ServiceMap } from "effect"
+import { Effect, Layer, LayerMap, ServiceMap } from "effect"
 import * as Errors from "./Errors.js"
+import { WorkerEnv } from "./Worker.js"
 
 /**
  * R2 service — Effect-wrapped Cloudflare Workers R2 object storage.
@@ -566,4 +567,420 @@ export class R2 extends ServiceMap.Service<
    * ```
    */
   static layer = (binding: R2Binding) => Layer.effect(this, this.make(binding))
+
+  // ── Task 7.7: Presigned URL generation ────────────────────────────────
+
+  /**
+   * Generate an AWS Signature V4 presigned URL for R2 object operations.
+   *
+   * Presigned URLs allow temporary access to R2 objects without requiring
+   * authentication on every request. They are S3-compatible and work with
+   * standard HTTP clients.
+   *
+   * @param config - AWS S3-compatible credentials for R2
+   * @param key - Object key to generate URL for
+   * @param options - Presigned URL options (operation type, expiry, metadata)
+   * @returns Effect yielding presigned URL string
+   *
+   * @example
+   * ```ts
+   * const config = {
+   *   accessKeyId: "...",
+   *   secretAccessKey: "...",
+   *   accountId: "...",
+   *   bucketName: "my-bucket"
+   * }
+   *
+   * const program = Effect.gen(function*() {
+   *   // Generate GET URL (expires in 1 hour)
+   *   const getUrl = yield* R2.presign(config, "file.txt", {
+   *     operation: "get",
+   *     expiresIn: 3600
+   *   })
+   *
+   *   // Generate PUT URL with content type
+   *   const putUrl = yield* R2.presign(config, "upload.txt", {
+   *     operation: "put",
+   *     expiresIn: 300,
+   *     httpMetadata: { contentType: "text/plain" }
+   *   })
+   * })
+   * ```
+   */
+  static presign = (
+    config: R2PresignConfig,
+    key: string,
+    options?: R2PresignOptions & { operation?: "get" | "put" },
+  ) =>
+    Effect.fn("R2.presign")(function* () {
+      const operation = options?.operation ?? "get"
+      const expiresIn = options?.expiresIn ?? 3600
+      const contentType = options?.httpMetadata?.contentType
+
+      return yield* Effect.tryPromise({
+        try: async () => {
+          const method = operation === "get" ? "GET" : "PUT"
+          return await generatePresignedUrl(config, {
+            key,
+            method,
+            expiresIn,
+            ...(contentType !== undefined && { contentType }),
+          })
+        },
+        catch: (cause) =>
+          new R2PresignError({
+            operation,
+            key,
+            cause,
+          }),
+      })
+    })
+
+  // ── Task 7.8: R2.json(schema) factory ──────────────────────────────────
+
+  /**
+   * Create schema-validated R2 variant (JSON mode).
+   *
+   * Returns a factory with `make` and `layer` methods that automatically:
+   * - Encode values to JSON before storing
+   * - Decode JSON values after retrieval
+   * - Validate against the provided schema
+   * - Add `SchemaError` to the error channel
+   * - Set `Content-Type: application/json` on put operations
+   *
+   * @param schema - Schema.Schema for encoding/decoding values
+   * @returns Factory with `make` and `layer` methods
+   *
+   * @example
+   * ```ts
+   * const UserSchema = Schema.Struct({
+   *   id: Schema.String,
+   *   name: Schema.String,
+   *   email: Schema.String,
+   * })
+   * type User = Schema.Schema.Type<typeof UserSchema>
+   *
+   * const userR2 = R2.json(UserSchema)
+   * const layer = userR2.layer(env.USERS_BUCKET)
+   *
+   * const program = Effect.gen(function*() {
+   *   const r2 = yield* R2
+   *   // Fully typed - returns User | null
+   *   const user = yield* r2.get("user/123.json")
+   *   // Fully typed - accepts User
+   *   yield* r2.put("user/456.json", { id: "456", name: "Bob", email: "bob@x.com" })
+   * }).pipe(Effect.provide(layer))
+   * ```
+   */
+  static json = <A>(schema: Schema.Schema<A>) => ({
+    make: (binding: R2Binding) =>
+      Effect.gen(function* () {
+        const baseR2 = yield* R2.make(binding)
+
+        const get = Effect.fn("R2.json.get")(function* (
+          key: string,
+          options?: R2GetOptions,
+        ) {
+          const obj = yield* baseR2.get(key, options)
+          if (obj === null) {
+            return null as A | null
+          }
+
+          const text = yield* Effect.tryPromise({
+            try: () => obj.text(),
+            catch: (cause) =>
+              new R2Error({
+                operation: "get",
+                key,
+                cause,
+              }),
+          })
+
+          const parsed = yield* Effect.try({
+            try: () => JSON.parse(text),
+            catch: (cause) =>
+              new Errors.SchemaError({
+                message: `Failed to parse JSON for key "${key}"`,
+                cause: cause as Error,
+              }),
+          })
+
+          return yield* Schema.decodeUnknownEffect(schema)(parsed).pipe(
+            Effect.mapError(
+              (cause) =>
+                new Errors.SchemaError({
+                  message: `Schema validation failed for key "${key}"`,
+                  cause: cause as Error,
+                }),
+            ),
+          )
+        })
+
+        const getOrFail = Effect.fn("R2.json.getOrFail")(function* (
+          key: string,
+          options?: R2GetOptions,
+        ) {
+          const value = yield* get(key, options)
+          if (value === null) {
+            return yield* Effect.fail(
+              new Errors.NotFoundError({
+                resource: "R2",
+                key,
+              }),
+            )
+          }
+          return value
+        })
+
+        const put = Effect.fn("R2.json.put")(function* (
+          key: string,
+          value: A,
+          options?: R2PutOptions,
+        ) {
+          const encoded = yield* Schema.encodeEffect(schema)(value).pipe(
+            Effect.mapError(
+              (cause) =>
+                new Errors.SchemaError({
+                  message: `Schema encoding failed for key "${key}"`,
+                  cause: cause as Error,
+                }),
+            ),
+          )
+
+          const json = yield* Effect.try({
+            try: () => JSON.stringify(encoded),
+            catch: (cause) =>
+              new Errors.SchemaError({
+                message: `Failed to stringify JSON for key "${key}"`,
+                cause: cause as Error,
+              }),
+          })
+
+          return yield* baseR2.put(key, json, {
+            ...options,
+            httpMetadata: {
+              contentType: "application/json",
+              ...options?.httpMetadata,
+            },
+          })
+        })
+
+        // Return service with typed methods
+        // Note: This object is structurally compatible with R2 service,
+        // but uses generic type A instead of R2Object/R2PutValue for values.
+        return {
+          get,
+          getOrFail,
+          put,
+          delete: baseR2.delete,
+          head: baseR2.head,
+          list: baseR2.list,
+          createMultipartUpload: baseR2.createMultipartUpload,
+          resumeMultipartUpload: baseR2.resumeMultipartUpload,
+        }
+      }),
+    layer: (binding: R2Binding) =>
+      Layer.effect(
+        R2,
+        // Type assertion is safe: we provide an R2-compatible service with
+        // schema-validated types (A instead of R2Object). The Layer system
+        // handles this correctly at runtime since the shape is identical.
+        R2.json(schema).make(binding) as unknown as ReturnType<typeof R2.make>,
+      ),
+  })
 }
+
+// ── AWS Signature V4 Implementation ─────────────────────────────────────
+
+const ALGORITHM = "AWS4-HMAC-SHA256"
+const SERVICE = "s3"
+const REGION = "auto"
+
+// Helper to convert ArrayBuffer to hex string
+const toHex = (buffer: ArrayBuffer): string => {
+  const bytes = new Uint8Array(buffer)
+  return Array.from(bytes)
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("")
+}
+
+// HMAC-SHA256 using Web Crypto API
+const hmacSha256 = async (
+  key: ArrayBuffer | Uint8Array,
+  message: string,
+): Promise<ArrayBuffer> => {
+  const cryptoKey = await crypto.subtle.importKey(
+    "raw",
+    key,
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"],
+  )
+  const encoder = new TextEncoder()
+  return crypto.subtle.sign("HMAC", cryptoKey, encoder.encode(message))
+}
+
+// Get signature key for AWS Signature V4
+const getSignatureKey = async (
+  secretKey: string,
+  dateStamp: string,
+  region: string,
+  service: string,
+): Promise<ArrayBuffer> => {
+  const encoder = new TextEncoder()
+  const kDate = await hmacSha256(
+    encoder.encode(`AWS4${secretKey}`),
+    dateStamp,
+  )
+  const kRegion = await hmacSha256(kDate, region)
+  const kService = await hmacSha256(kRegion, service)
+  const kSigning = await hmacSha256(kService, "aws4_request")
+  return kSigning
+}
+
+// SHA256 hash
+const sha256Hash = async (message: string): Promise<string> => {
+  const encoder = new TextEncoder()
+  const hash = await crypto.subtle.digest("SHA-256", encoder.encode(message))
+  return toHex(hash)
+}
+
+/**
+ * Generate AWS Signature V4 presigned URL for R2.
+ * Internal implementation - use R2.presign() instead.
+ */
+const generatePresignedUrl = async (
+  config: R2PresignConfig,
+  options: {
+    key: string
+    method: "GET" | "PUT" | "DELETE" | "HEAD"
+    expiresIn?: number
+    contentType?: string
+  },
+): Promise<string> => {
+  const { accessKeyId, secretAccessKey, accountId, bucketName } = config
+  const { key, method, expiresIn = 3600, contentType } = options
+
+  // Generate timestamps
+  const now = new Date()
+  const dateStamp = now.toISOString().slice(0, 10).replace(/-/g, "")
+  const amzDate =
+    now.toISOString().replace(/[:-]|\..*/g, "") + "Z"
+
+  // Build the canonical request
+  const host = `${bucketName}.${accountId}.r2.cloudflarestorage.com`
+  const encodedKey = encodeURIComponent(key).replace(/%2F/g, "/")
+
+  // Build query parameters
+  const queryParams = new URLSearchParams({
+    "X-Amz-Algorithm": ALGORITHM,
+    "X-Amz-Credential": `${accessKeyId}/${dateStamp}/${REGION}/${SERVICE}/aws4_request`,
+    "X-Amz-Date": amzDate,
+    "X-Amz-Expires": expiresIn.toString(),
+    "X-Amz-SignedHeaders": "host",
+    "x-id":
+      method === "GET"
+        ? "GetObject"
+        : method === "PUT"
+          ? "PutObject"
+          : method === "DELETE"
+            ? "DeleteObject"
+            : "HeadObject",
+  })
+
+  // Add content-type to signed headers if provided (for PUT)
+  let signedHeaders = "host"
+  let canonicalHeaders = `host:${host}\n`
+
+  if (contentType && method === "PUT") {
+    signedHeaders = "content-type;host"
+    canonicalHeaders = `content-type:${contentType}\nhost:${host}\n`
+    queryParams.set("X-Amz-SignedHeaders", signedHeaders)
+  }
+
+  // Canonical request components
+  const canonicalUri = `/${encodedKey}`
+  const canonicalQueryString = queryParams.toString()
+  const payloadHash = "UNSIGNED-PAYLOAD"
+
+  const canonicalRequest = [
+    method,
+    canonicalUri,
+    canonicalQueryString,
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join("\n")
+
+  // Create string to sign
+  const credentialScope = `${dateStamp}/${REGION}/${SERVICE}/aws4_request`
+  const stringToSign = [
+    ALGORITHM,
+    amzDate,
+    credentialScope,
+    await sha256Hash(canonicalRequest),
+  ].join("\n")
+
+  // Calculate signature
+  const signingKey = await getSignatureKey(
+    secretAccessKey,
+    dateStamp,
+    REGION,
+    SERVICE,
+  )
+  const signature = toHex(await hmacSha256(signingKey, stringToSign))
+
+  // Build final URL
+  const finalUrl = `https://${host}${canonicalUri}?${canonicalQueryString}&X-Amz-Signature=${signature}`
+
+  return finalUrl
+}
+
+// ── Task 7.9: R2Map LayerMap for Multi-Instance ─────────────────────────
+
+/**
+ * R2Map — Multi-instance R2 service using LayerMap.
+ *
+ * Allows dynamic resolution of multiple R2 buckets by binding name.
+ * Useful when you have multiple R2 bindings and need to access them
+ * by name at runtime.
+ *
+ * @example
+ * ```ts
+ * // Define the R2Map layer (typically in your layer composition)
+ * const layers = Layer.mergeAll(
+ *   WorkerEnv.layer(env),
+ *   R2Map.layer
+ * )
+ *
+ * // Use different R2 buckets dynamically
+ * const program = Effect.gen(function*() {
+ *   // Access ASSETS_BUCKET
+ *   const assetsR2 = yield* R2.pipe(
+ *     Effect.provide(R2Map.get("ASSETS_BUCKET"))
+ *   )
+ *   const asset = yield* assetsR2.get("logo.png")
+ *
+ *   // Access UPLOADS_BUCKET
+ *   const uploadsR2 = yield* R2.pipe(
+ *     Effect.provide(R2Map.get("UPLOADS_BUCKET"))
+ *   )
+ *   yield* uploadsR2.put("user/file.txt", "content")
+ * })
+ * ```
+ */
+export class R2Map extends LayerMap.Service<R2Map>()(
+  "effectful-cloudflare/R2Map",
+  {
+    lookup: (name: string) =>
+      Layer.effect(
+        R2,
+        Effect.gen(function* () {
+          const env = yield* WorkerEnv
+          const binding = env[name] as R2Binding
+          return yield* R2.make(binding)
+        }),
+      ),
+    idleTimeToLive: "5 minutes",
+  },
+) {}
