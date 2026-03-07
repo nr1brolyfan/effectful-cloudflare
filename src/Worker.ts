@@ -103,3 +103,154 @@ export class ExecutionCtx extends ServiceMap.Service<
 	static layer = (ctx: ExecutionContext) =>
 		Layer.effect(this, this.make(ctx))
 }
+
+// ── Worker Entrypoint Functions ────────────────────────────────────────
+
+/**
+ * Create a Cloudflare Worker fetch handler from an Effect program.
+ *
+ * This function bridges the Cloudflare Workers runtime with Effect by:
+ * - Accepting an Effect-based request handler
+ * - Creating layers from the worker environment and execution context
+ * - Running the Effect program and returning the Response
+ * - Catching all errors and returning a 500 response on unhandled failures
+ *
+ * @param handler - Effect program that receives a Request and returns a Response
+ * @param layers - Function that creates Effect layers from worker env and ExecutionContext
+ * @returns ExportedHandler with fetch method
+ *
+ * @example
+ * ```ts
+ * import { Effect, Layer } from "effect"
+ * import { Worker, KV } from "effectful-cloudflare"
+ *
+ * export default Worker.serve(
+ *   (request) => Effect.gen(function*() {
+ *     const kv = yield* KV
+ *     const value = yield* kv.get("hello")
+ *     return new Response(value ?? "not found")
+ *   }),
+ *   (env, ctx) => Layer.mergeAll(
+ *     KV.layer(env.MY_KV as KVBinding),
+ *     Worker.ExecutionCtx.layer(ctx),
+ *   )
+ * )
+ * ```
+ */
+export const serve = <E, R>(
+	handler: (request: Request) => Effect.Effect<Response, E, R>,
+	layers: (
+		env: Record<string, unknown>,
+		ctx: ExecutionContext,
+	) => Layer.Layer<R>,
+): ExportedHandler => ({
+	fetch: async (request, env, ctx) => {
+		const layer = layers(env as Record<string, unknown>, ctx)
+		return Effect.runPromise(
+			handler(request).pipe(
+				Effect.provide(layer),
+				Effect.catchCause(() =>
+					Effect.succeed(
+						new Response(
+							JSON.stringify({ error: "Internal Server Error" }),
+							{
+								status: 500,
+								headers: { "Content-Type": "application/json" },
+							},
+						),
+					),
+				),
+			),
+		)
+	},
+})
+
+/**
+ * Create a Cloudflare Worker scheduled handler from an Effect program.
+ *
+ * This function bridges the Cloudflare Workers cron trigger with Effect by:
+ * - Accepting an Effect-based scheduled event handler
+ * - Creating layers from the worker environment and execution context
+ * - Running the Effect program when the cron trigger fires
+ *
+ * @param handler - Effect program that receives a ScheduledController and performs work
+ * @param layers - Function that creates Effect layers from worker env and ExecutionContext
+ * @returns Partial ExportedHandler with scheduled method
+ *
+ * @example
+ * ```ts
+ * import { Effect, Layer } from "effect"
+ * import { Worker, KV } from "effectful-cloudflare"
+ *
+ * export const scheduled = Worker.onScheduled(
+ *   (controller) => Effect.gen(function*() {
+ *     const kv = yield* KV
+ *     yield* kv.put("last-run", new Date().toISOString())
+ *     yield* Effect.log(`Scheduled at ${controller.scheduledTime}`)
+ *   }),
+ *   (env, ctx) => Layer.mergeAll(
+ *     KV.layer(env.MY_KV as KVBinding),
+ *     Worker.ExecutionCtx.layer(ctx),
+ *   )
+ * )
+ * ```
+ */
+export const onScheduled = <E, R>(
+	handler: (controller: ScheduledController) => Effect.Effect<void, E, R>,
+	layers: (
+		env: Record<string, unknown>,
+		ctx: ExecutionContext,
+	) => Layer.Layer<R>,
+): Pick<ExportedHandler, "scheduled"> => ({
+	scheduled: async (controller, env, ctx) => {
+		const layer = layers(env as Record<string, unknown>, ctx)
+		await Effect.runPromise(handler(controller).pipe(Effect.provide(layer)))
+	},
+})
+
+/**
+ * Create a Cloudflare Worker queue handler from an Effect program.
+ *
+ * This function bridges the Cloudflare Queue consumer with Effect by:
+ * - Accepting an Effect-based message batch handler
+ * - Creating layers from the worker environment and execution context
+ * - Running the Effect program when a batch of messages is received
+ *
+ * @param handler - Effect program that receives a MessageBatch and processes messages
+ * @param layers - Function that creates Effect layers from worker env and ExecutionContext
+ * @returns Partial ExportedHandler with queue method
+ *
+ * @example
+ * ```ts
+ * import { Effect, Layer } from "effect"
+ * import { Worker, KV } from "effectful-cloudflare"
+ *
+ * export const queue = Worker.onQueue(
+ *   (batch) => Effect.gen(function*() {
+ *     const kv = yield* KV
+ *     for (const message of batch.messages) {
+ *       yield* kv.put(message.id, JSON.stringify(message.body))
+ *       yield* Effect.log(`Processed message ${message.id}`)
+ *     }
+ *   }),
+ *   (env, ctx) => Layer.mergeAll(
+ *     KV.layer(env.MY_KV as KVBinding),
+ *     Worker.ExecutionCtx.layer(ctx),
+ *   )
+ * )
+ * ```
+ */
+export const onQueue = <T, E, R>(
+	handler: (batch: MessageBatch<T>) => Effect.Effect<void, E, R>,
+	layers: (
+		env: Record<string, unknown>,
+		ctx: ExecutionContext,
+	) => Layer.Layer<R>,
+): Pick<ExportedHandler, "queue"> => ({
+	queue: async (batch, env, ctx) => {
+		const layer = layers(env as Record<string, unknown>, ctx)
+		await Effect.runPromise(
+			handler(batch as MessageBatch<T>).pipe(Effect.provide(layer)),
+		)
+	},
+})
