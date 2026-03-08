@@ -1,0 +1,204 @@
+# Basic Worker Example
+
+A minimal Cloudflare Worker demonstrating `effectful-cloudflare` library usage with Effect v4.
+
+## Features
+
+This example shows:
+
+- **Worker.serve** — Create a CF Worker handler from an Effect program
+- **KV namespace** — Key-value storage with automatic JSON serialization and schema validation
+- **D1 database** — SQLite database with typed queries
+- **Layer composition** — Combine multiple services with dependency injection
+- **Tagged errors** — Type-safe error handling with Effect
+
+## What it does
+
+A simple CRUD API for managing users:
+
+- `GET /` — API documentation
+- `GET /users` — List all users (from D1)
+- `POST /users` — Create user (stores in both KV and D1)
+- `GET /users/:id` — Get user by ID (from KV with schema validation)
+- `DELETE /users/:id` — Delete user (from both KV and D1)
+
+## Prerequisites
+
+- [Bun](https://bun.sh) or [Node.js](https://nodejs.org) installed
+- [Wrangler CLI](https://developers.cloudflare.com/workers/wrangler/install-and-update/) installed
+
+## Setup
+
+1. **Install dependencies:**
+
+   ```bash
+   bun install
+   # or
+   npm install
+   ```
+
+2. **Build the parent library** (effectful-cloudflare):
+
+   ```bash
+   cd ../..
+   bun run build
+   cd examples/basic-worker
+   ```
+
+3. **Create KV namespace:**
+
+   ```bash
+   wrangler kv:namespace create MY_KV
+   ```
+
+   This will output a namespace ID. Update `wrangler.jsonc`:
+
+   ```jsonc
+   "kv_namespaces": [
+     {
+       "binding": "MY_KV",
+       "id": "YOUR_NAMESPACE_ID_HERE",
+       "preview_id": "YOUR_PREVIEW_ID_HERE"
+     }
+   ]
+   ```
+
+4. **Create D1 database:**
+
+   ```bash
+   wrangler d1 create example-db
+   ```
+
+   This will output a database ID. Update `wrangler.jsonc`:
+
+   ```jsonc
+   "d1_databases": [
+     {
+       "binding": "MY_DB",
+       "database_name": "example-db",
+       "database_id": "YOUR_DATABASE_ID_HERE"
+     }
+   ]
+   ```
+
+## Running
+
+### Development mode
+
+```bash
+bun run dev
+# or
+npm run dev
+```
+
+This starts Wrangler in dev mode with local bindings.
+
+### Test the API
+
+```bash
+# Get API info
+curl http://localhost:8787/
+
+# Create a user
+curl -X POST http://localhost:8787/users \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Alice", "email": "alice@example.com"}'
+
+# List users
+curl http://localhost:8787/users
+
+# Get user by ID
+curl http://localhost:8787/users/USER_ID_HERE
+
+# Delete user
+curl -X DELETE http://localhost:8787/users/USER_ID_HERE
+```
+
+## Deployment
+
+```bash
+bun run deploy
+# or
+npm run deploy
+```
+
+This deploys the worker to Cloudflare.
+
+## Project Structure
+
+```
+examples/basic-worker/
+├── src/
+│   └── index.ts          # Worker entrypoint (uses Effect v4)
+├── package.json          # Dependencies (effectful-cloudflare)
+├── wrangler.jsonc        # Cloudflare Worker config
+├── tsconfig.json         # TypeScript config
+└── README.md             # This file
+```
+
+## Key Patterns
+
+### 1. Service Layer Pattern
+
+```ts
+const program = Effect.gen(function*() {
+  const kv = yield* KV        // Access KV service from context
+  const db = yield* D1        // Access D1 service from context
+  
+  // Use services...
+})
+
+// Provide layers to inject dependencies
+program.pipe(
+  Effect.provide(
+    Layer.mergeAll(
+      KV.layer(env.MY_KV),
+      D1.layer(env.MY_DB)
+    )
+  )
+)
+```
+
+### 2. Schema Validation
+
+```ts
+// Define schema
+const User = Schema.Struct({
+  id: Schema.String,
+  name: Schema.String,
+  email: Schema.String,
+  createdAt: Schema.String,
+})
+
+// Create typed KV layer
+KV.layer(env.MY_KV, User)
+
+// All KV operations now automatically validate against User schema
+const user = yield* kv.get("user:123")  // Type: User | null
+```
+
+### 3. Worker.serve
+
+```ts
+import { serve } from "effectful-cloudflare/Worker"
+
+export default serve(
+  // Handler: Request -> Effect<Response>
+  (request) => Effect.gen(function*() {
+    const kv = yield* KV
+    return new Response("Hello!")
+  }),
+  
+  // Layers: env -> Layer
+  (env) => Layer.mergeAll(
+    KV.layer(env.MY_KV),
+    D1.layer(env.MY_DB)
+  )
+)
+```
+
+## Learn More
+
+- [effectful-cloudflare README](../../README.md)
+- [Effect documentation](https://effect.website)
+- [Cloudflare Workers docs](https://developers.cloudflare.com/workers/)
