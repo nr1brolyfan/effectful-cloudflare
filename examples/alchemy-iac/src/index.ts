@@ -9,11 +9,12 @@
  */
 
 import { Effect, Layer, Schema } from "effect";
-import { D1, type D1Binding } from "effectful-cloudflare/D1";
-import { KV, type KVBinding } from "effectful-cloudflare/KV";
-import { type QueueBinding, QueueProducer } from "effectful-cloudflare/Queue";
-import { R2, type R2Binding } from "effectful-cloudflare/R2";
+import { D1 } from "effectful-cloudflare/D1";
+import { KV } from "effectful-cloudflare/KV";
+import { QueueProducer } from "effectful-cloudflare/Queue";
+import { R2 } from "effectful-cloudflare/R2";
 import { serve } from "effectful-cloudflare/Worker";
+import type { Env } from "../alchemy.run";
 
 // ── Schemas ────────────────────────────────────────────────────────────────
 
@@ -310,17 +311,11 @@ const handler = (request: Request) =>
 
 // ── Worker Export ──────────────────────────────────────────────────────────
 
-export default serve(handler, (env) => {
-  const { CACHE_KV, ANALYTICS_DB, CONTENT_STORAGE, TASKS_QUEUE } = env as {
-    CACHE_KV: KVBinding;
-    ANALYTICS_DB: D1Binding;
-    CONTENT_STORAGE: R2Binding;
-    TASKS_QUEUE: QueueBinding;
-  };
+export default serve(handler, (env: Env) => {
   return Layer.mergeAll(
-    KV.layer(CACHE_KV, CacheValue),
-    D1.layer(ANALYTICS_DB),
-    R2.layer(CONTENT_STORAGE),
-    QueueProducer.json(TaskMessage).layer(TASKS_QUEUE)
+    KV.layer(env.CACHE_KV, CacheValue),
+    D1.layer(env.ANALYTICS_DB),
+    R2.layer(env.CONTENT_STORAGE),
+    QueueProducer.json(TaskMessage).layer(env.TASKS_QUEUE)
   );
 });

@@ -97,6 +97,7 @@ const workerProps = {
 };
 
 const worker = await Worker("example-worker", workerProps);
+export type Env = typeof worker.Env;
 
 // ── 4. Finalize Deployment ─────────────────────────────────────────────────
 

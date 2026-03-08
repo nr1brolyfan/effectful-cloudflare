@@ -15,10 +15,14 @@
  * ```ts
  * import { Effect } from "effect"
  * import { Worker } from "effectful-cloudflare/Worker"
+ * import type { Env } from "./alchemy.run" // or wrangler-generated types
  *
- * export default Worker.serve<MyEnv>(
+ * export default Worker.serve(
  *   (request) => Effect.succeed(new Response("Hello!")),
- *   (env, ctx) => Layer.mergeAll(WorkerEnv.layer(env), ExecutionCtx.layer(ctx))
+ *   (env: Env, ctx) => Layer.mergeAll(
+ *     KV.layer(env.MY_KV),         // env.MY_KV is already typed!
+ *     ExecutionCtx.layer(ctx),
+ *   )
  * )
  * ```
  */
@@ -147,31 +151,27 @@ export class ExecutionCtx extends ServiceMap.Service<
  * ```ts
  * import { Effect, Layer } from "effect"
  * import { Worker, KV } from "effectful-cloudflare"
+ * import type { Env } from "./alchemy.run" // or wrangler-generated types
  *
- * interface Env { readonly MY_KV: KVBinding }
- *
- * export default Worker.serve<Env>(
+ * export default Worker.serve(
  *   (request) => Effect.gen(function*() {
  *     const kv = yield* KV
  *     const value = yield* kv.get("hello")
  *     return new Response(value ?? "not found")
  *   }),
- *   (env, ctx) => Layer.mergeAll(
- *     KV.layer(env.MY_KV),
+ *   (env: Env, ctx) => Layer.mergeAll(
+ *     KV.layer(env.MY_KV),         // env.MY_KV is already typed!
  *     Worker.ExecutionCtx.layer(ctx),
  *   )
  * )
  * ```
  */
-export const serve = <E, R>(
+export const serve = <Env extends object, E, R>(
   handler: (request: Request) => Effect.Effect<Response, E, R>,
-  layers: (
-    env: Record<string, unknown>,
-    ctx: ExecutionContext
-  ) => Layer.Layer<R>
-): ExportedHandler => ({
+  layers: (env: Env, ctx: ExecutionContext) => Layer.Layer<R>
+): ExportedHandler<Env> => ({
   fetch: (request, env, ctx) => {
-    const layer = layers(env as Record<string, unknown>, ctx);
+    const layer = layers(env as Env, ctx);
     return Effect.runPromise(
       handler(request).pipe(
         Effect.provide(layer),
@@ -204,6 +204,7 @@ export const serve = <E, R>(
  * ```ts
  * import { Effect, Layer } from "effect"
  * import { Worker, KV } from "effectful-cloudflare"
+ * import type { Env } from "./alchemy.run"
  *
  * export const scheduled = Worker.onScheduled(
  *   (controller) => Effect.gen(function*() {
@@ -211,22 +212,19 @@ export const serve = <E, R>(
  *     yield* kv.put("last-run", new Date().toISOString())
  *     yield* Effect.log(`Scheduled at ${controller.scheduledTime}`)
  *   }),
- *   (env, ctx) => Layer.mergeAll(
- *     KV.layer(env.MY_KV),
+ *   (env: Env, ctx) => Layer.mergeAll(
+ *     KV.layer(env.MY_KV),         // env.MY_KV is already typed!
  *     Worker.ExecutionCtx.layer(ctx),
  *   )
  * )
  * ```
  */
-export const onScheduled = <E, R>(
+export const onScheduled = <Env extends object, E, R>(
   handler: (controller: ScheduledController) => Effect.Effect<void, E, R>,
-  layers: (
-    env: Record<string, unknown>,
-    ctx: ExecutionContext
-  ) => Layer.Layer<R>
-): Pick<ExportedHandler, "scheduled"> => ({
+  layers: (env: Env, ctx: ExecutionContext) => Layer.Layer<R>
+): Pick<ExportedHandler<Env>, "scheduled"> => ({
   scheduled: async (controller, env, ctx) => {
-    const layer = layers(env as Record<string, unknown>, ctx);
+    const layer = layers(env as Env, ctx);
     await Effect.runPromise(handler(controller).pipe(Effect.provide(layer)));
   },
 });
@@ -247,6 +245,7 @@ export const onScheduled = <E, R>(
  * ```ts
  * import { Effect, Layer } from "effect"
  * import { Worker, KV } from "effectful-cloudflare"
+ * import type { Env } from "./alchemy.run"
  *
  * export const queue = Worker.onQueue(
  *   (batch) => Effect.gen(function*() {
@@ -256,22 +255,19 @@ export const onScheduled = <E, R>(
  *       yield* Effect.log(`Processed message ${message.id}`)
  *     }
  *   }),
- *   (env, ctx) => Layer.mergeAll(
- *     KV.layer(env.MY_KV),
+ *   (env: Env, ctx) => Layer.mergeAll(
+ *     KV.layer(env.MY_KV),         // env.MY_KV is already typed!
  *     Worker.ExecutionCtx.layer(ctx),
  *   )
  * )
  * ```
  */
-export const onQueue = <T, E, R>(
+export const onQueue = <Env extends object, T, E, R>(
   handler: (batch: MessageBatch<T>) => Effect.Effect<void, E, R>,
-  layers: (
-    env: Record<string, unknown>,
-    ctx: ExecutionContext
-  ) => Layer.Layer<R>
-): Pick<ExportedHandler, "queue"> => ({
+  layers: (env: Env, ctx: ExecutionContext) => Layer.Layer<R>
+): Pick<ExportedHandler<Env>, "queue"> => ({
   queue: async (batch, env, ctx) => {
-    const layer = layers(env as Record<string, unknown>, ctx);
+    const layer = layers(env as Env, ctx);
     await Effect.runPromise(
       handler(batch as MessageBatch<T>).pipe(Effect.provide(layer))
     );
