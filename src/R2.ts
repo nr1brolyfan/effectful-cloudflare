@@ -1,6 +1,6 @@
 // ── src/R2.ts ──────────────────────────────────────────────────────────
 
-import { Data, Schema } from "effect";
+import { Data } from "effect";
 
 // ── Task 7.1: R2Binding structural type ────────────────────────────────
 
@@ -298,7 +298,7 @@ import { WorkerEnv } from "./Worker.js";
  * - Automatic error handling and typed errors
  * - Multipart upload support
  * - Presigned URL generation
- * - Schema validation support via `.json()` factory
+ * - Full R2Object return type with body, text(), arrayBuffer() etc.
  * - Multi-instance support via `R2Map`
  * - Automatic tracing with `Effect.fn`
  *
@@ -646,159 +646,6 @@ export class R2 extends ServiceMap.Service<
           }),
       });
     });
-
-  // ── Task 7.8: R2.json(schema) factory ──────────────────────────────────
-
-  /**
-   * Create schema-validated R2 variant (JSON mode).
-   *
-   * Returns a factory with `make` and `layer` methods that automatically:
-   * - Encode values to JSON before storing
-   * - Decode JSON values after retrieval
-   * - Validate against the provided schema
-   * - Add `SchemaError` to the error channel
-   * - Set `Content-Type: application/json` on put operations
-   *
-   * @param schema - Schema.Schema for encoding/decoding values
-   * @returns Factory with `make` and `layer` methods
-   *
-   * @example
-   * ```ts
-   * const UserSchema = Schema.Struct({
-   *   id: Schema.String,
-   *   name: Schema.String,
-   *   email: Schema.String,
-   * })
-   * type User = Schema.Schema.Type<typeof UserSchema>
-   *
-   * const userR2 = R2.json(UserSchema)
-   * const layer = userR2.layer(env.USERS_BUCKET)
-   *
-   * const program = Effect.gen(function*() {
-   *   const r2 = yield* R2
-   *   // Fully typed - returns User | null
-   *   const user = yield* r2.get("user/123.json")
-   *   // Fully typed - accepts User
-   *   yield* r2.put("user/456.json", { id: "456", name: "Bob", email: "bob@x.com" })
-   * }).pipe(Effect.provide(layer))
-   * ```
-   */
-  static json = <A>(schema: Schema.Schema<A>) => ({
-    make: (binding: R2Binding) =>
-      Effect.gen(function* () {
-        const baseR2 = yield* R2.make(binding);
-
-        const get = Effect.fn("R2.json.get")(function* (
-          key: string,
-          options?: R2GetOptions
-        ) {
-          const obj = yield* baseR2.get(key, options);
-          if (obj === null) {
-            return null as A | null;
-          }
-
-          const text = yield* Effect.tryPromise({
-            try: () => obj.text(),
-            catch: (cause) =>
-              new R2Error({
-                operation: "get",
-                key,
-                cause,
-              }),
-          });
-
-          const parsed = yield* Effect.try({
-            try: () => JSON.parse(text),
-            catch: (cause) =>
-              new Errors.SchemaError({
-                message: `Failed to parse JSON for key "${key}"`,
-                cause: cause as Error,
-              }),
-          });
-
-          return yield* Schema.decodeUnknownEffect(schema)(parsed).pipe(
-            Effect.mapError(
-              (cause) =>
-                new Errors.SchemaError({
-                  message: `Schema validation failed for key "${key}"`,
-                  cause: cause as Error,
-                })
-            )
-          );
-        });
-
-        const getOrFail = Effect.fn("R2.json.getOrFail")(function* (
-          key: string,
-          options?: R2GetOptions
-        ) {
-          const value = yield* get(key, options);
-          if (value === null) {
-            return yield* Effect.fail(
-              new Errors.NotFoundError({
-                resource: "R2",
-                key,
-              })
-            );
-          }
-          return value;
-        });
-
-        const put = Effect.fn("R2.json.put")(function* (
-          key: string,
-          value: A,
-          options?: R2PutOptions
-        ) {
-          const encoded = yield* Schema.encodeEffect(schema)(value).pipe(
-            Effect.mapError(
-              (cause) =>
-                new Errors.SchemaError({
-                  message: `Schema encoding failed for key "${key}"`,
-                  cause: cause as Error,
-                })
-            )
-          );
-
-          const json = yield* Effect.try({
-            try: () => JSON.stringify(encoded),
-            catch: (cause) =>
-              new Errors.SchemaError({
-                message: `Failed to stringify JSON for key "${key}"`,
-                cause: cause as Error,
-              }),
-          });
-
-          return yield* baseR2.put(key, json, {
-            ...options,
-            httpMetadata: {
-              contentType: "application/json",
-              ...options?.httpMetadata,
-            },
-          });
-        });
-
-        // Return service with typed methods
-        // Note: This object is structurally compatible with R2 service,
-        // but uses generic type A instead of R2Object/R2PutValue for values.
-        return {
-          get,
-          getOrFail,
-          put,
-          delete: baseR2.delete,
-          head: baseR2.head,
-          list: baseR2.list,
-          createMultipartUpload: baseR2.createMultipartUpload,
-          resumeMultipartUpload: baseR2.resumeMultipartUpload,
-        };
-      }),
-    layer: (binding: R2Binding) =>
-      Layer.effect(
-        R2,
-        // Type assertion is safe: we provide an R2-compatible service with
-        // schema-validated types (A instead of R2Object). The Layer system
-        // handles this correctly at runtime since the shape is identical.
-        R2.json(schema).make(binding) as unknown as ReturnType<typeof R2.make>
-      ),
-  });
 }
 
 // ── AWS Signature V4 Implementation ─────────────────────────────────────

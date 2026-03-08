@@ -1,5 +1,5 @@
 import { expect, it } from "@effect/vitest";
-import { Effect, Schema } from "effect";
+import { Effect } from "effect";
 import { R2 } from "../src/R2.js";
 import { memoryR2 } from "../src/Testing.js";
 
@@ -238,20 +238,15 @@ it.effect("getOrFail can be caught with catchTag", () =>
   Effect.gen(function* () {
     const r2 = yield* R2;
 
-    const result = yield* r2.getOrFail("missing.txt").pipe(
-      Effect.catchTag(
-        "NotFoundError",
-        (error) =>
-          Effect.succeed({
-            key: error.key,
-            body: new ReadableStream(),
-            text: () => Promise.resolve("Fallback content"),
-          } as any) // Type assertion for test purposes
-      )
-    );
+    const result = yield* r2
+      .getOrFail("missing.txt")
+      .pipe(
+        Effect.catchTag("NotFoundError", (error) =>
+          Effect.succeed(`Not found: ${error.key}`)
+        )
+      );
 
-    const text = yield* Effect.promise(() => result.text());
-    expect(text).toBe("Fallback content");
+    expect(result).toBe("Not found: missing.txt");
   }).pipe(Effect.provide(R2.layer(memoryR2())))
 );
 
@@ -342,141 +337,4 @@ it.effect("complex workflow - upload, list, retrieve, delete", () =>
     expect(afterDelete.objects.length).toBe(1);
     expect(afterDelete.objects[0]?.key).toBe("images/photo.jpg");
   }).pipe(Effect.provide(R2.layer(memoryR2())))
-);
-
-// ── JSON mode with schema validation ────────────────────────────────────
-
-const UserSchema = Schema.Struct({
-  id: Schema.String,
-  name: Schema.String,
-  email: Schema.String,
-  age: Schema.Number,
-});
-type User = typeof UserSchema.Type;
-
-it.effect(
-  "JSON mode - put and get with schema validation",
-  () =>
-    Effect.gen(function* () {
-      const r2 = (yield* R2) as any; // Type assertion for JSON mode
-      const user: User = {
-        id: "123",
-        name: "Alice",
-        email: "alice@example.com",
-        age: 30,
-      };
-
-      yield* r2.put("users/alice.json", user);
-      const retrieved: User | null = yield* r2.get("users/alice.json");
-
-      expect(retrieved).not.toBeNull();
-      expect(retrieved?.name).toBe("Alice");
-      expect(retrieved?.email).toBe("alice@example.com");
-      expect(retrieved?.age).toBe(30);
-    }).pipe(
-      Effect.provide(R2.json(UserSchema).layer(memoryR2()))
-    ) as Effect.Effect<void>
-);
-
-it.effect("JSON mode - get returns null for missing keys", () =>
-  Effect.gen(function* () {
-    const r2 = yield* R2;
-    const result = yield* r2.get("non-existent.json");
-    expect(result).toBeNull();
-  }).pipe(Effect.provide(R2.json(UserSchema).layer(memoryR2())))
-);
-
-it.effect(
-  "JSON mode - getOrFail returns typed value",
-  () =>
-    Effect.gen(function* () {
-      const r2 = (yield* R2) as any; // Type assertion for JSON mode
-      const user: User = {
-        id: "456",
-        name: "Bob",
-        email: "bob@example.com",
-        age: 25,
-      };
-
-      yield* r2.put("users/bob.json", user);
-      const retrieved: User = yield* r2.getOrFail("users/bob.json");
-
-      expect(retrieved.name).toBe("Bob");
-      expect(retrieved.age).toBe(25);
-    }).pipe(
-      Effect.provide(R2.json(UserSchema).layer(memoryR2()))
-    ) as Effect.Effect<void>
-);
-
-it.effect(
-  "JSON mode - getOrFail fails with NotFoundError for missing keys",
-  () =>
-    Effect.gen(function* () {
-      const r2 = yield* R2;
-
-      const result = yield* r2.getOrFail("non-existent.json").pipe(Effect.flip);
-
-      expect(result._tag).toBe("NotFoundError");
-    }).pipe(Effect.provide(R2.json(UserSchema).layer(memoryR2())))
-);
-
-it.effect(
-  "JSON mode - handles multiple objects",
-  () =>
-    Effect.gen(function* () {
-      const r2 = (yield* R2) as any; // Type assertion for JSON mode
-      const users: User[] = [
-        { id: "1", name: "Alice", email: "alice@example.com", age: 30 },
-        { id: "2", name: "Bob", email: "bob@example.com", age: 25 },
-        { id: "3", name: "Charlie", email: "charlie@example.com", age: 35 },
-      ];
-
-      // Store all users
-      for (const user of users) {
-        yield* r2.put(`users/${user.id}.json`, user);
-      }
-
-      // Retrieve and verify
-      const alice: User = yield* r2.getOrFail("users/1.json");
-      const bob: User = yield* r2.getOrFail("users/2.json");
-      const charlie: User = yield* r2.getOrFail("users/3.json");
-
-      expect(alice.name).toBe("Alice");
-      expect(bob.name).toBe("Bob");
-      expect(charlie.name).toBe("Charlie");
-
-      // List all users
-      const list = yield* r2.list({ prefix: "users/" });
-      expect(list.objects.length).toBe(3);
-    }).pipe(
-      Effect.provide(R2.json(UserSchema).layer(memoryR2()))
-    ) as Effect.Effect<void>
-);
-
-it.effect(
-  "JSON mode - put with custom metadata",
-  () =>
-    Effect.gen(function* () {
-      const r2 = (yield* R2) as any; // Type assertion for JSON mode
-      const user: User = {
-        id: "789",
-        name: "Diana",
-        email: "diana@example.com",
-        age: 28,
-      };
-      const metadata = { version: "1", author: "admin" };
-
-      yield* r2.put("users/diana.json", user, {
-        customMetadata: metadata,
-        httpMetadata: { contentType: "application/json" },
-      });
-
-      // Verify metadata via head operation
-      const info = yield* r2.head("users/diana.json");
-      expect(info).not.toBeNull();
-      expect(info?.customMetadata?.version).toBe("1");
-      expect(info?.httpMetadata?.contentType).toContain("json");
-    }).pipe(
-      Effect.provide(R2.json(UserSchema).layer(memoryR2()))
-    ) as Effect.Effect<void>
 );
