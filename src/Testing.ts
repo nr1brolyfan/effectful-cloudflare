@@ -1903,3 +1903,258 @@ export const memoryAI = (config?: {
     run,
   };
 };
+
+// ── memoryAIGateway ─────────────────────────────────────────────────────
+
+/**
+ * In-memory AI Gateway implementation for testing.
+ *
+ * Implements the `AIGatewayBinding` structural interface with:
+ * - Configurable mock responses per provider
+ * - Request logging with unique log IDs
+ * - Log retrieval and patching (metadata/score)
+ * - Gateway URL generation
+ * - Support for single and batch requests
+ *
+ * **Note:** This is a test mock. It does NOT:
+ * - Actually proxy requests to AI providers
+ * - Implement caching, rate limiting, or cost tracking
+ * - Validate provider-specific request formats
+ * - Connect to Cloudflare AI Gateway runtime
+ *
+ * @param config - Optional configuration
+ * @param config.responses - Map of provider names to their mock responses
+ * @param config.gatewayUrl - Base gateway URL (default: "https://gateway.ai.cloudflare.com")
+ * @returns AIGatewayBinding compatible with AIGateway.layer() and AIGateway.make()
+ *
+ * @example
+ * ```ts
+ * import { it } from "@effect/vitest"
+ * import { Effect } from "effect"
+ * import { AIGateway } from "./AIGateway.js"
+ * import { memoryAIGateway } from "./Testing.js"
+ *
+ * it.effect("sends request through AI Gateway", () =>
+ *   Effect.gen(function*() {
+ *     const binding = memoryAIGateway({
+ *       responses: {
+ *         openai: {
+ *           choices: [{ message: { role: "assistant", content: "Hello!" } }]
+ *         }
+ *       }
+ *     })
+ *     const gateway = yield* AIGateway
+ *
+ *     const response = yield* gateway.run({
+ *       provider: "openai",
+ *       endpoint: "/v1/chat/completions",
+ *       query: { model: "gpt-4", messages: [{ role: "user", content: "Hi" }] }
+ *     })
+ *
+ *     expect(response.ok).toBe(true)
+ *     const data = yield* Effect.promise(() => response.json())
+ *     expect(data.choices[0].message.content).toBe("Hello!")
+ *   }).pipe(Effect.provide(AIGateway.layer(binding)))
+ * )
+ * ```
+ */
+export const memoryAIGateway = (config?: {
+  responses?: Record<string, unknown>;
+  gatewayUrl?: string;
+}) => {
+  const responses = config?.responses ?? {};
+  const gatewayUrl = config?.gatewayUrl ?? "https://gateway.ai.cloudflare.com";
+
+  // Internal storage for logs
+  const logs = new Map<
+    string,
+    {
+      id: string;
+      provider: string;
+      model: string;
+      created_at: string;
+      request: {
+        messages: readonly { role: string; content: string }[];
+      };
+      response?: {
+        message?: { role: string; content: string };
+      };
+      status_code?: number;
+      metadata?: Record<string, unknown>;
+      cost?: number;
+    }
+  >();
+  let logCounter = 0;
+
+  const generateLogId = (): string => {
+    logCounter++;
+    return `log-${Date.now()}-${logCounter}`;
+  };
+
+  const createLog = (
+    request: {
+      provider: string;
+      endpoint: string;
+      query: unknown;
+      headers?: Record<string, string>;
+    },
+    responseData: unknown
+  ) => {
+    const logId = generateLogId();
+    const now = new Date().toISOString();
+
+    // Extract messages from query if present
+    const messages =
+      typeof request.query === "object" &&
+      request.query !== null &&
+      "messages" in request.query &&
+      Array.isArray(request.query.messages)
+        ? request.query.messages
+        : [];
+
+    // Extract model from query if present
+    const model =
+      typeof request.query === "object" &&
+      request.query !== null &&
+      "model" in request.query &&
+      typeof request.query.model === "string"
+        ? request.query.model
+        : "unknown";
+
+    const responseMessage =
+      typeof responseData === "object" &&
+      responseData !== null &&
+      "choices" in responseData &&
+      Array.isArray(responseData.choices) &&
+      responseData.choices[0]
+        ? (
+            responseData.choices[0] as {
+              message: { role: string; content: string };
+            }
+          ).message
+        : undefined;
+
+    const log = {
+      id: logId,
+      provider: request.provider,
+      model,
+      created_at: now,
+      request: {
+        messages: messages as readonly { role: string; content: string }[],
+      },
+      ...(responseMessage && {
+        response: {
+          message: responseMessage,
+        },
+      }),
+      status_code: 200,
+    };
+
+    logs.set(logId, log);
+    return log;
+  };
+
+  const run = (
+    requestOrRequests:
+      | {
+          provider: string;
+          endpoint: string;
+          query: unknown;
+          headers?: Record<string, string>;
+        }
+      | readonly {
+          provider: string;
+          endpoint: string;
+          query: unknown;
+          headers?: Record<string, string>;
+        }[]
+  ): Promise<Response> => {
+    // Handle batch requests
+    if (Array.isArray(requestOrRequests)) {
+      // For batch, return a response containing all sub-responses
+      const batchResults = requestOrRequests.map((req) => {
+        const mockResponse = (responses[req.provider] as unknown) ?? {
+          success: true,
+          result: "Mock AI Gateway response",
+        };
+        return mockResponse;
+      });
+
+      return Promise.resolve(
+        new Response(JSON.stringify(batchResults), {
+          status: 200,
+          headers: {
+            "Content-Type": "application/json",
+          },
+        })
+      );
+    }
+
+    // Single request (TypeScript knows it's not an array after the check above)
+    const request = requestOrRequests as {
+      provider: string;
+      endpoint: string;
+      query: unknown;
+      headers?: Record<string, string>;
+    };
+    const mockResponse = (responses[request.provider] as unknown) ?? {
+      success: true,
+      result: "Mock AI Gateway response",
+    };
+
+    // Create log for this request
+    const log = createLog(request, mockResponse);
+
+    return Promise.resolve(
+      new Response(JSON.stringify(mockResponse), {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+          "cf-aig-log-id": log.id,
+        },
+      })
+    );
+  };
+
+  const getLog = (logId: string) => {
+    const log = logs.get(logId);
+    if (!log) {
+      return Promise.reject(new Error(`Log ${logId} not found`));
+    }
+    return Promise.resolve(log);
+  };
+
+  const patchLog = (
+    logId: string,
+    options: { metadata?: Record<string, unknown>; score?: number }
+  ): Promise<void> => {
+    const log = logs.get(logId);
+    if (!log) {
+      return Promise.reject(new Error(`Log ${logId} not found`));
+    }
+
+    // Update log with new metadata/score
+    const updatedLog = {
+      ...log,
+      ...(options.metadata && { metadata: options.metadata }),
+      ...(options.score !== undefined && { cost: options.score }),
+    };
+
+    logs.set(logId, updatedLog);
+    return Promise.resolve();
+  };
+
+  const getUrl = (provider?: string): Promise<string> => {
+    if (provider) {
+      return Promise.resolve(`${gatewayUrl}/${provider}`);
+    }
+    return Promise.resolve(gatewayUrl);
+  };
+
+  return {
+    run,
+    getLog,
+    patchLog,
+    getUrl,
+  };
+};
