@@ -22,6 +22,16 @@ import type {
   R2Objects,
   R2Range,
 } from "./R2.js";
+import type {
+  VectorFloatArray,
+  VectorizeBinding,
+  VectorizeIndexDetails,
+  VectorizeMatches,
+  VectorizeQueryOptions,
+  VectorizeVector,
+  VectorizeVectorMetadata,
+  VectorizeVectorMutation,
+} from "./Vectorize.js";
 
 // ── Internal types ──────────────────────────────────────────────────────
 
@@ -1552,5 +1562,257 @@ export const memoryDOStorage = (options?: {
     deleteAlarm,
     transaction,
     ...(sqlStorage ? { sql: sqlStorage } : {}),
+  };
+};
+
+// ── memoryVectorize ─────────────────────────────────────────────────────
+
+/**
+ * In-memory Vectorize implementation for testing.
+ *
+ * Implements the `VectorizeBinding` structural interface with:
+ * - In-memory Map storage for vectors
+ * - Similarity search using cosine distance
+ * - Support for insert, upsert, query, getByIds, deleteByIds, describe
+ * - Metadata and namespace support
+ * - Configurable index dimensions and metric
+ *
+ * **Note:** This is a simplified mock for testing. It does NOT implement:
+ * - Euclidean or dot-product metrics (only cosine)
+ * - High-performance vector search (uses linear scan)
+ * - Persistent storage across test runs
+ * - Full metadata filtering
+ *
+ * @param options - Optional configuration
+ * @param options.dimensions - Number of dimensions for vectors (default: 3)
+ * @param options.metric - Distance metric (default: "cosine")
+ * @returns VectorizeBinding compatible with Vectorize.layer() and Vectorize.make()
+ *
+ * @example
+ * ```ts
+ * import { it } from "@effect/vitest"
+ * import { Effect } from "effect"
+ * import { Vectorize } from "./Vectorize.js"
+ * import { memoryVectorize } from "./Testing.js"
+ *
+ * it.effect("inserts and queries vectors", () =>
+ *   Effect.gen(function*() {
+ *     const vectorize = yield* Vectorize
+ *
+ *     yield* vectorize.insert([
+ *       { id: "doc_1", values: [0.1, 0.2, 0.3] },
+ *       { id: "doc_2", values: [0.4, 0.5, 0.6] }
+ *     ])
+ *
+ *     const results = yield* vectorize.query([0.1, 0.2, 0.3], { topK: 2 })
+ *     expect(results.matches).toHaveLength(2)
+ *   }).pipe(Effect.provide(Vectorize.layer(memoryVectorize())))
+ * )
+ * ```
+ */
+export const memoryVectorize = (options?: {
+  dimensions?: number;
+  metric?: "cosine" | "euclidean" | "dot-product";
+}): VectorizeBinding => {
+  const dimensions = options?.dimensions ?? 3;
+  const metric = options?.metric ?? "cosine";
+
+  // Internal storage: Map<id, VectorizeVector>
+  const vectors = new Map<string, VectorizeVector>();
+
+  // Helper: calculate cosine similarity
+  const cosineSimilarity = (
+    a: VectorFloatArray | number[],
+    b: VectorFloatArray | number[]
+  ): number => {
+    let dotProduct = 0;
+    let normA = 0;
+    let normB = 0;
+
+    for (let i = 0; i < a.length; i++) {
+      const valA = a[i] ?? 0;
+      const valB = b[i] ?? 0;
+      dotProduct += valA * valB;
+      normA += valA * valA;
+      normB += valB * valB;
+    }
+
+    if (normA === 0 || normB === 0) {
+      return 0;
+    }
+
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  };
+
+  const insert = (
+    vectorList: readonly VectorizeVector[]
+  ): Promise<VectorizeVectorMutation> => {
+    const ids: string[] = [];
+
+    for (const vector of vectorList) {
+      // Check if vector already exists
+      if (vectors.has(vector.id)) {
+        throw new Error(`Vector with id ${vector.id} already exists`);
+      }
+
+      vectors.set(vector.id, vector);
+      ids.push(vector.id);
+    }
+
+    return Promise.resolve({
+      mutationId: `mutation-${Date.now()}`,
+      ids,
+      count: ids.length,
+    });
+  };
+
+  const upsert = (
+    vectorList: readonly VectorizeVector[]
+  ): Promise<VectorizeVectorMutation> => {
+    const ids: string[] = [];
+
+    for (const vector of vectorList) {
+      vectors.set(vector.id, vector);
+      ids.push(vector.id);
+    }
+
+    return Promise.resolve({
+      mutationId: `mutation-${Date.now()}`,
+      ids,
+      count: ids.length,
+    });
+  };
+
+  const query = (
+    vector: VectorFloatArray | number[],
+    queryOptions?: VectorizeQueryOptions
+  ): Promise<VectorizeMatches> => {
+    const topK = queryOptions?.topK ?? 5;
+    const returnMetadata = queryOptions?.returnMetadata ?? false;
+    const returnValues = queryOptions?.returnValues ?? false;
+    const namespace = queryOptions?.namespace;
+    const filter = queryOptions?.filter;
+
+    // Filter vectors by namespace
+    let candidates = Array.from(vectors.values());
+
+    if (namespace !== undefined) {
+      candidates = candidates.filter((v) => v.namespace === namespace);
+    }
+
+    // Filter by metadata (simple equality check)
+    if (filter) {
+      candidates = candidates.filter((v) => {
+        if (!v.metadata) {
+          return false;
+        }
+        for (const [key, value] of Object.entries(filter)) {
+          if (v.metadata[key] !== value) {
+            return false;
+          }
+        }
+        return true;
+      });
+    }
+
+    // Calculate similarity scores
+    const scored = candidates.map((v) => ({
+      vector: v,
+      score: cosineSimilarity(vector, v.values),
+    }));
+
+    // Sort by score descending
+    scored.sort((a, b) => b.score - a.score);
+
+    // Take top K
+    const topMatches = scored.slice(0, topK);
+
+    // Build result matches
+    const matches = topMatches.map((match) => {
+      const result: {
+        id: string;
+        score: number;
+        namespace?: string;
+        metadata?: Record<string, VectorizeVectorMetadata>;
+        values?: VectorFloatArray | number[];
+      } = {
+        id: match.vector.id,
+        score: match.score,
+      };
+
+      if (match.vector.namespace !== undefined) {
+        result.namespace = match.vector.namespace;
+      }
+
+      if (returnMetadata && match.vector.metadata) {
+        result.metadata = match.vector.metadata;
+      }
+
+      if (returnValues) {
+        result.values = match.vector.values;
+      }
+
+      return result;
+    });
+
+    return Promise.resolve({
+      matches,
+      count: matches.length,
+    });
+  };
+
+  const getByIds = (
+    ids: readonly string[]
+  ): Promise<readonly VectorizeVector[]> => {
+    const results: VectorizeVector[] = [];
+
+    for (const id of ids) {
+      const vector = vectors.get(id);
+      if (vector) {
+        results.push(vector);
+      }
+    }
+
+    return Promise.resolve(results);
+  };
+
+  const deleteByIds = (
+    ids: readonly string[]
+  ): Promise<VectorizeVectorMutation> => {
+    const deleted: string[] = [];
+
+    for (const id of ids) {
+      if (vectors.delete(id)) {
+        deleted.push(id);
+      }
+    }
+
+    return Promise.resolve({
+      mutationId: `mutation-${Date.now()}`,
+      ids: deleted,
+      count: deleted.length,
+    });
+  };
+
+  const describe = (): Promise<VectorizeIndexDetails> => {
+    return Promise.resolve({
+      id: "test-index-id",
+      name: "test-index",
+      description: "In-memory test index",
+      config: {
+        dimensions,
+        metric,
+      },
+      vectorsCount: vectors.size,
+    });
+  };
+
+  return {
+    insert,
+    upsert,
+    query,
+    getByIds,
+    deleteByIds,
+    describe,
   };
 };
