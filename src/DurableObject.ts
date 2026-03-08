@@ -138,6 +138,20 @@ export interface DOListOptions {
 }
 
 /**
+ * Minimal structural type for SQL storage cursor.
+ *
+ * Represents the result of a SQL query execution. The cursor provides
+ * synchronous iteration over query results.
+ */
+export interface DOSqlStorageCursor<T = Record<string, unknown>> {
+  /**
+   * Convert cursor to array of results.
+   * This is a synchronous operation.
+   */
+  toArray(): T[];
+}
+
+/**
  * Minimal structural type for Durable Object SQLite storage.
  *
  * This type is used for DO SQL storage operations. Only available
@@ -147,7 +161,8 @@ export interface DOListOptions {
  * ```ts
  * // Inside a Durable Object with SQL storage
  * const sql: DOSqlStorageBinding = state.storage.sql
- * const results = await sql.exec("SELECT * FROM users WHERE id = ?", userId)
+ * const cursor = sql.exec("SELECT * FROM users WHERE id = ?", userId)
+ * const results = cursor.toArray()
  * ```
  */
 export interface DOSqlStorageBinding {
@@ -156,12 +171,13 @@ export interface DOSqlStorageBinding {
    */
   readonly databaseSize: number;
   /**
-   * Execute a SQL query and return all results.
+   * Execute a SQL query and return a cursor.
+   * The cursor must be converted to an array using toArray().
    */
-  exec<T = unknown>(
+  exec<T extends Record<string, unknown> = Record<string, unknown>>(
     query: string,
     ...bindings: readonly unknown[]
-  ): Promise<readonly T[]>;
+  ): DOSqlStorageCursor<T>;
 }
 
 // ── Target types ────────────────────────────────────────────────────────
@@ -619,19 +635,19 @@ export interface EffectSqlStorage {
   /**
    * Execute a SQL query and return all results.
    */
-  readonly exec: <T = unknown>(
+  readonly exec: (
     sql: string,
     ...params: readonly unknown[]
-  ) => Effect.Effect<readonly T[], SqlError>;
+  ) => Effect.Effect<readonly unknown[], SqlError>;
 
   /**
    * Execute a SQL query and return the first result.
    * Returns undefined if no results.
    */
-  readonly execOne: <T = unknown>(
+  readonly execOne: (
     sql: string,
     ...params: readonly unknown[]
-  ) => Effect.Effect<T | undefined, SqlError>;
+  ) => Effect.Effect<unknown | undefined, SqlError>;
 }
 
 /**
@@ -801,16 +817,17 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
 
   // ── SQL Storage ──────────────────────────────────────────────────────
 
-  const exec = Effect.fn("EffectSqlStorage.exec")(function* <T = unknown>(
+  const exec = Effect.fn("EffectSqlStorage.exec")(function* (
     sql: string,
     ...params: readonly unknown[]
   ) {
-    return yield* Effect.tryPromise({
-      try: async () => {
+    return yield* Effect.try({
+      try: () => {
         if (!storage.sql) {
           throw new Error("SQL storage not available for this Durable Object");
         }
-        return (await storage.sql.exec<T>(sql, ...params)) as readonly T[];
+        const cursor = storage.sql.exec(sql, ...params);
+        return cursor.toArray() as readonly unknown[];
       },
       catch: (cause) =>
         new SqlError({
@@ -821,19 +838,17 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
     });
   });
 
-  const execOne = Effect.fn("EffectSqlStorage.execOne")(function* <T = unknown>(
+  const execOne = Effect.fn("EffectSqlStorage.execOne")(function* (
     sql: string,
     ...params: readonly unknown[]
   ) {
-    return yield* Effect.tryPromise({
-      try: async () => {
+    return yield* Effect.try({
+      try: () => {
         if (!storage.sql) {
           throw new Error("SQL storage not available for this Durable Object");
         }
-        const results = (await storage.sql.exec<T>(
-          sql,
-          ...params
-        )) as readonly T[];
+        const cursor = storage.sql.exec(sql, ...params);
+        const results = cursor.toArray() as readonly unknown[];
         return results[0];
       },
       catch: (cause) =>
@@ -879,3 +894,376 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
     sql: sqlStorage,
   };
 };
+
+// ── EffectDurableObject Server Base Class ─────────────────────────────────
+
+/**
+ * Abstract base class for Durable Objects with Effect support.
+ *
+ * This class provides a bridge between Cloudflare's Durable Object lifecycle
+ * and Effect's functional programming model. It wraps all lifecycle methods
+ * (fetch, alarm, WebSocket handlers) in Effects with proper error handling.
+ *
+ * @example
+ * ```ts
+ * interface Env {
+ *   WORKFLOW: Workflow
+ * }
+ *
+ * export class ContentSync extends EffectDurableObject<Env> {
+ *   fetch(request: Request) {
+ *     return Effect.gen(this, function* (self) {
+ *       const url = new URL(request.url)
+ *       if (url.pathname === "/add") {
+ *         const files = yield* Effect.tryPromise(() => request.json())
+ *         const pending = (yield* self.storage.get<string[]>("pending")) ?? []
+ *         yield* self.storage.put("pending", [...pending, ...files])
+ *
+ *         const alarm = yield* self.storage.getAlarm()
+ *         if (!alarm) {
+ *           yield* self.storage.setAlarm(Date.now() + 10 * 60 * 1000)
+ *         }
+ *
+ *         return new Response(JSON.stringify({ queued: pending.length + files.length }))
+ *       }
+ *       return new Response("Not found", { status: 404 })
+ *     })
+ *   }
+ *
+ *   alarm() {
+ *     return Effect.gen(this, function* (self) {
+ *       const pending = (yield* self.storage.get<string[]>("pending")) ?? []
+ *       yield* self.storage.put("pending", [])
+ *       if (pending.length > 0) {
+ *         yield* Effect.tryPromise(() =>
+ *           self.env.WORKFLOW.create({ params: { documents: pending } })
+ *         )
+ *       }
+ *     })
+ *   }
+ * }
+ * ```
+ */
+export abstract class EffectDurableObject<Env = unknown> {
+  /**
+   * Effect-wrapped storage interface.
+   * Use this to interact with Durable Object storage.
+   */
+  readonly storage: EffectStorage;
+
+  /**
+   * Cloudflare environment bindings.
+   * Contains all bindings defined in wrangler.toml.
+   */
+  readonly env: Env;
+
+  /**
+   * Unique identifier for this Durable Object instance.
+   */
+  readonly id: DurableObjectId;
+
+  /**
+   * Durable Object state for WebSocket hibernation API.
+   * @internal
+   */
+  private readonly state: DurableObjectState;
+
+  /**
+   * Create a new EffectDurableObject instance.
+   *
+   * @param state - Cloudflare Durable Object state
+   * @param env - Cloudflare environment bindings
+   */
+  constructor(state: DurableObjectState, env: Env) {
+    this.storage = makeStorage(state.storage as unknown as DOStorageBinding);
+    this.env = env;
+    this.id = state.id;
+    this.state = state;
+  }
+
+  /**
+   * Handle HTTP requests to this Durable Object.
+   *
+   * CRITICAL: You must pass `this` as the first argument to `Effect.gen()` to
+   * preserve context. Use the `self` parameter inside the generator to access
+   * the Durable Object instance.
+   *
+   * @param request - The incoming HTTP request
+   * @returns Effect that yields a Response
+   *
+   * @example
+   * ```ts
+   * fetch(request: Request) {
+   *   return Effect.gen(this, function* (self) {
+   *     const value = yield* self.storage.get("key")
+   *     return new Response(value ?? "not found")
+   *   })
+   * }
+   * ```
+   */
+  abstract fetch(request: Request): Effect.Effect<Response, DOError>;
+
+  /**
+   * Handle scheduled alarms.
+   *
+   * Called when an alarm set via `self.storage.setAlarm()` triggers.
+   * Use this for deferred or batched operations.
+   *
+   * @returns Effect that yields void
+   *
+   * @example
+   * ```ts
+   * alarm() {
+   *   return Effect.gen(this, function* (self) {
+   *     const pending = (yield* self.storage.get<string[]>("pending")) ?? []
+   *     yield* self.storage.put("pending", [])
+   *     // Process pending items...
+   *   })
+   * }
+   * ```
+   */
+  alarm?(): Effect.Effect<void, DOError>;
+
+  /**
+   * Handle WebSocket messages.
+   *
+   * Called when a message is received on an accepted WebSocket connection.
+   * This is part of the WebSocket Hibernation API.
+   *
+   * @param ws - The WebSocket that received the message
+   * @param message - The message data (string or ArrayBuffer)
+   * @returns Effect that yields void
+   *
+   * @example
+   * ```ts
+   * webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
+   *   return Effect.gen(this, function* (self) {
+   *     const sockets = self.state.getWebSockets()
+   *     for (const socket of sockets) {
+   *       if (socket !== ws) {
+   *         socket.send(typeof message === "string" ? message : "binary")
+   *       }
+   *     }
+   *   })
+   * }
+   * ```
+   */
+  webSocketMessage?(
+    ws: WebSocket,
+    message: string | ArrayBuffer
+  ): Effect.Effect<void, DOError>;
+
+  /**
+   * Handle WebSocket close events.
+   *
+   * Called when a WebSocket connection closes.
+   *
+   * @param ws - The WebSocket that closed
+   * @param code - Close code
+   * @param reason - Close reason
+   * @param wasClean - Whether the close was clean
+   * @returns Effect that yields void
+   *
+   * @example
+   * ```ts
+   * webSocketClose(ws: WebSocket, code: number, reason: string, wasClean: boolean) {
+   *   return Effect.gen(this, function* (self) {
+   *     yield* Effect.logInfo(`WebSocket closed: ${code} ${reason}`)
+   *   })
+   * }
+   * ```
+   */
+  webSocketClose?(
+    ws: WebSocket,
+    code: number,
+    reason: string,
+    wasClean: boolean
+  ): Effect.Effect<void, DOError>;
+
+  /**
+   * Handle WebSocket errors.
+   *
+   * Called when a WebSocket connection encounters an error.
+   *
+   * @param ws - The WebSocket that errored
+   * @param error - The error that occurred
+   * @returns Effect that yields void
+   *
+   * @example
+   * ```ts
+   * webSocketError(ws: WebSocket, error: unknown) {
+   *   return Effect.gen(this, function* (self) {
+   *     yield* Effect.logError("WebSocket error", error)
+   *   })
+   * }
+   * ```
+   */
+  webSocketError?(ws: WebSocket, error: unknown): Effect.Effect<void, DOError>;
+
+  /**
+   * Accept a WebSocket connection for hibernation.
+   *
+   * This enables the WebSocket Hibernation API, allowing the Durable Object
+   * to handle WebSocket messages, close, and error events via the lifecycle
+   * methods above.
+   *
+   * @param ws - The WebSocket to accept
+   * @param tags - Optional tags for filtering WebSockets
+   * @returns Effect that yields void
+   *
+   * @example
+   * ```ts
+   * fetch(request: Request) {
+   *   return Effect.gen(this, function* (self) {
+   *     const { 0: client, 1: server } = new WebSocketPair()
+   *     yield* self.acceptWebSocket(server, ["chat-room"])
+   *     return new Response(null, { status: 101, webSocket: client })
+   *   })
+   * }
+   * ```
+   */
+  acceptWebSocket(
+    ws: WebSocket,
+    tags?: readonly string[]
+  ): Effect.Effect<void, WebSocketError> {
+    return Effect.try({
+      try: () => {
+        this.state.acceptWebSocket(ws, tags as string[] | undefined);
+      },
+      catch: (cause) =>
+        new WebSocketError({
+          operation: "accept",
+          message: "Failed to accept WebSocket",
+          cause,
+        }),
+    });
+  }
+
+  /**
+   * Get all accepted WebSocket connections.
+   *
+   * @param tag - Optional tag to filter WebSockets
+   * @returns Effect that yields array of WebSockets
+   *
+   * @example
+   * ```ts
+   * webSocketMessage(ws: WebSocket, message: string | ArrayBuffer) {
+   *   return Effect.gen(this, function* (self) {
+   *     const sockets = yield* self.getWebSockets("chat-room")
+   *     for (const socket of sockets) {
+   *       if (socket !== ws) {
+   *         socket.send(typeof message === "string" ? message : "binary")
+   *       }
+   *     }
+   *   })
+   * }
+   * ```
+   */
+  getWebSockets(
+    tag?: string
+  ): Effect.Effect<readonly WebSocket[], WebSocketError> {
+    return Effect.try({
+      try: () => {
+        return this.state.getWebSockets(tag) as readonly WebSocket[];
+      },
+      catch: (cause) =>
+        new WebSocketError({
+          operation: "get",
+          message: "Failed to get WebSockets",
+          cause,
+        }),
+    });
+  }
+
+  /**
+   * Internal bridge for Cloudflare runtime: fetch handler.
+   * Converts Effect to Promise and catches all errors.
+   * @internal
+   */
+  async _fetch(request: Request): Promise<Response> {
+    try {
+      const effect = this.fetch(request);
+      return await Effect.runPromise(effect);
+    } catch (error) {
+      console.error("Durable Object fetch error:", error);
+      return new Response("Internal Server Error", { status: 500 });
+    }
+  }
+
+  /**
+   * Internal bridge for Cloudflare runtime: alarm handler.
+   * Converts Effect to Promise and silently catches errors.
+   * @internal
+   */
+  async _alarm(): Promise<void> {
+    if (!this.alarm) {
+      return;
+    }
+
+    try {
+      const effect = this.alarm();
+      await Effect.runPromise(effect);
+    } catch (error) {
+      console.error("Durable Object alarm error:", error);
+    }
+  }
+
+  /**
+   * Internal bridge for Cloudflare runtime: WebSocket message handler.
+   * @internal
+   */
+  async _webSocketMessage(
+    ws: WebSocket,
+    message: string | ArrayBuffer
+  ): Promise<void> {
+    if (!this.webSocketMessage) {
+      return;
+    }
+
+    try {
+      const effect = this.webSocketMessage(ws, message);
+      await Effect.runPromise(effect);
+    } catch (error) {
+      console.error("Durable Object WebSocket message error:", error);
+    }
+  }
+
+  /**
+   * Internal bridge for Cloudflare runtime: WebSocket close handler.
+   * @internal
+   */
+  async _webSocketClose(
+    ws: WebSocket,
+    code: number,
+    reason: string,
+    wasClean: boolean
+  ): Promise<void> {
+    if (!this.webSocketClose) {
+      return;
+    }
+
+    try {
+      const effect = this.webSocketClose(ws, code, reason, wasClean);
+      await Effect.runPromise(effect);
+    } catch (error) {
+      console.error("Durable Object WebSocket close error:", error);
+    }
+  }
+
+  /**
+   * Internal bridge for Cloudflare runtime: WebSocket error handler.
+   * @internal
+   */
+  async _webSocketError(ws: WebSocket, error: unknown): Promise<void> {
+    if (!this.webSocketError) {
+      return;
+    }
+
+    try {
+      const effect = this.webSocketError(ws, error);
+      await Effect.runPromise(effect);
+    } catch (err) {
+      console.error("Durable Object WebSocket error handler error:", err);
+    }
+  }
+}
