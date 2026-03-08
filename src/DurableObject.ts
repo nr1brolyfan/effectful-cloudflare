@@ -482,3 +482,400 @@ export class DOClient extends ServiceMap.Service<
     return Layer.effect(DOClient, DOClient.make());
   }
 }
+
+// ── EffectStorage ───────────────────────────────────────────────────────
+
+/**
+ * Effect-wrapped Durable Object storage interface.
+ *
+ * Provides Effect-based access to Durable Object storage operations with
+ * proper error handling. All methods return Effects that can fail with
+ * StorageError or AlarmError.
+ *
+ * @example
+ * ```ts
+ * // Inside a Durable Object
+ * const storage = makeStorage(state.storage)
+ *
+ * const program = Effect.gen(function* () {
+ *   // Get a value
+ *   const value = yield* storage.get<string>("key")
+ *
+ *   // Put a value
+ *   yield* storage.put("key", "value")
+ *
+ *   // Delete a key
+ *   yield* storage.delete("key")
+ *
+ *   // List all keys
+ *   const keys = yield* storage.list()
+ *
+ *   // Use transactions
+ *   yield* storage.transaction((txn) =>
+ *     Effect.gen(function* () {
+ *       yield* txn.put("key1", "value1")
+ *       yield* txn.put("key2", "value2")
+ *     })
+ *   )
+ * })
+ * ```
+ */
+export interface EffectStorage {
+  /**
+   * Delete a key from storage.
+   * Returns true if the key was deleted, false if it didn't exist.
+   */
+  readonly delete: (key: string) => Effect.Effect<boolean, StorageError>;
+
+  /**
+   * Delete the current alarm.
+   */
+  readonly deleteAlarm: () => Effect.Effect<void, AlarmError>;
+
+  /**
+   * Delete all keys from storage.
+   */
+  readonly deleteAll: () => Effect.Effect<void, StorageError>;
+  /**
+   * Get a value from storage by key.
+   * Returns undefined if the key doesn't exist.
+   */
+  readonly get: <T>(key: string) => Effect.Effect<T | undefined, StorageError>;
+
+  /**
+   * Get the current alarm time (in milliseconds since epoch).
+   * Returns null if no alarm is set.
+   */
+  readonly getAlarm: () => Effect.Effect<number | null, AlarmError>;
+
+  /**
+   * List keys in storage with optional filtering.
+   */
+  readonly list: <T>(
+    options?: DOListOptions
+  ) => Effect.Effect<Map<string, T>, StorageError>;
+
+  /**
+   * Store a value in storage.
+   */
+  readonly put: <T>(key: string, value: T) => Effect.Effect<void, StorageError>;
+
+  /**
+   * Set an alarm to trigger at a specific time.
+   * @param scheduledTime - Unix timestamp in milliseconds or Date object
+   */
+  readonly setAlarm: (
+    scheduledTime: number | Date
+  ) => Effect.Effect<void, AlarmError>;
+
+  /**
+   * SQL storage interface (only available if DO is configured with SQLite).
+   */
+  readonly sql: EffectSqlStorage;
+
+  /**
+   * Run a transaction on storage.
+   * All operations in the transaction are atomic.
+   */
+  readonly transaction: <A, E>(
+    fn: (txn: EffectStorage) => Effect.Effect<A, E>
+  ) => Effect.Effect<A, StorageError | E>;
+}
+
+/**
+ * Effect-wrapped Durable Object SQL storage interface.
+ *
+ * Provides Effect-based access to Durable Object SQLite operations.
+ * Only available when the Durable Object is configured with SQL storage.
+ *
+ * @example
+ * ```ts
+ * // Inside a Durable Object with SQL storage
+ * const storage = makeStorage(state.storage)
+ *
+ * const program = Effect.gen(function* () {
+ *   // Execute a query
+ *   const users = yield* storage.sql.exec<User>(
+ *     "SELECT * FROM users WHERE active = ?",
+ *     true
+ *   )
+ *
+ *   // Get first result
+ *   const user = yield* storage.sql.execOne<User>(
+ *     "SELECT * FROM users WHERE id = ?",
+ *     userId
+ *   )
+ *
+ *   // Get database size
+ *   const size = yield* storage.sql.databaseSize
+ * })
+ * ```
+ */
+export interface EffectSqlStorage {
+  /**
+   * Get the current database size in bytes.
+   */
+  readonly databaseSize: Effect.Effect<number, SqlError>;
+  /**
+   * Execute a SQL query and return all results.
+   */
+  readonly exec: <T = unknown>(
+    sql: string,
+    ...params: readonly unknown[]
+  ) => Effect.Effect<readonly T[], SqlError>;
+
+  /**
+   * Execute a SQL query and return the first result.
+   * Returns undefined if no results.
+   */
+  readonly execOne: <T = unknown>(
+    sql: string,
+    ...params: readonly unknown[]
+  ) => Effect.Effect<T | undefined, SqlError>;
+}
+
+/**
+ * Create an Effect-wrapped storage interface from a Durable Object storage binding.
+ *
+ * This function wraps all storage operations in Effects with proper error handling.
+ * All methods are traced with `Effect.fn` for observability.
+ *
+ * @param storage - The native Durable Object storage binding
+ * @returns Effect-wrapped storage interface
+ *
+ * @example
+ * ```ts
+ * // Inside a Durable Object constructor
+ * export class MyDurableObject {
+ *   readonly storage: EffectStorage
+ *
+ *   constructor(state: DurableObjectState, env: Env) {
+ *     this.storage = makeStorage(state.storage)
+ *   }
+ *
+ *   fetch(request: Request) {
+ *     return Effect.gen(function* () {
+ *       const value = yield* this.storage.get<string>("key")
+ *       return new Response(value ?? "not found")
+ *     })
+ *   }
+ * }
+ * ```
+ */
+export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
+  const get = Effect.fn("EffectStorage.get")(function* <T>(key: string) {
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const result = await storage.get<T>(key);
+        // When called with a single key (string), result is T | undefined
+        // When called with array, result is Map<string, T>
+        // Since we only pass a single key string, we can safely cast
+        return result as T | undefined;
+      },
+      catch: (cause) =>
+        new StorageError({
+          operation: "get",
+          key,
+          message: `Failed to get key: ${key}`,
+          cause,
+        }),
+    });
+  });
+
+  const put = Effect.fn("EffectStorage.put")(function* <T>(
+    key: string,
+    value: T
+  ) {
+    return yield* Effect.tryPromise({
+      try: () => storage.put(key, value),
+      catch: (cause) =>
+        new StorageError({
+          operation: "put",
+          key,
+          message: `Failed to put key: ${key}`,
+          cause,
+        }),
+    });
+  });
+
+  const del = Effect.fn("EffectStorage.delete")(function* (key: string) {
+    return yield* Effect.tryPromise({
+      try: async () => {
+        const result = await storage.delete(key);
+        return typeof result === "boolean" ? result : result > 0;
+      },
+      catch: (cause) =>
+        new StorageError({
+          operation: "delete",
+          key,
+          message: `Failed to delete key: ${key}`,
+          cause,
+        }),
+    });
+  });
+
+  const deleteAll = Effect.fn("EffectStorage.deleteAll")(function* () {
+    return yield* Effect.tryPromise({
+      try: () => storage.deleteAll(),
+      catch: (cause) =>
+        new StorageError({
+          operation: "delete",
+          message: "Failed to delete all keys",
+          cause,
+        }),
+    });
+  });
+
+  const list = Effect.fn("EffectStorage.list")(function* <T>(
+    options?: DOListOptions
+  ) {
+    return yield* Effect.tryPromise({
+      try: () => storage.list<T>(options),
+      catch: (cause) =>
+        new StorageError({
+          operation: "list",
+          message: "Failed to list keys",
+          cause,
+        }),
+    });
+  });
+
+  const getAlarm = Effect.fn("EffectStorage.getAlarm")(function* () {
+    return yield* Effect.tryPromise({
+      try: () => storage.getAlarm(),
+      catch: (cause) =>
+        new AlarmError({
+          operation: "get",
+          message: "Failed to get alarm",
+          cause,
+        }),
+    });
+  });
+
+  const setAlarm = Effect.fn("EffectStorage.setAlarm")(function* (
+    scheduledTime: number | Date
+  ) {
+    return yield* Effect.tryPromise({
+      try: () => storage.setAlarm(scheduledTime),
+      catch: (cause) =>
+        new AlarmError({
+          operation: "set",
+          message: "Failed to set alarm",
+          cause,
+        }),
+    });
+  });
+
+  const deleteAlarm = Effect.fn("EffectStorage.deleteAlarm")(function* () {
+    return yield* Effect.tryPromise({
+      try: () => storage.deleteAlarm(),
+      catch: (cause) =>
+        new AlarmError({
+          operation: "delete",
+          message: "Failed to delete alarm",
+          cause,
+        }),
+    });
+  });
+
+  const transaction = Effect.fn("EffectStorage.transaction")(function* <A, E>(
+    fn: (txn: EffectStorage) => Effect.Effect<A, E>
+  ) {
+    return yield* Effect.tryPromise({
+      try: () =>
+        storage.transaction(async (txn) => {
+          const txnStorage = makeStorage(txn as unknown as DOStorageBinding);
+          return await Effect.runPromise(fn(txnStorage));
+        }),
+      catch: (cause) =>
+        new StorageError({
+          operation: "transaction",
+          message:
+            cause instanceof Error && cause.message.includes("transaction")
+              ? `Transaction failed and was rolled back: ${cause.message}`
+              : "Transaction failed",
+          cause,
+        }),
+    });
+  });
+
+  // ── SQL Storage ──────────────────────────────────────────────────────
+
+  const exec = Effect.fn("EffectSqlStorage.exec")(function* <T = unknown>(
+    sql: string,
+    ...params: readonly unknown[]
+  ) {
+    return yield* Effect.tryPromise({
+      try: async () => {
+        if (!storage.sql) {
+          throw new Error("SQL storage not available for this Durable Object");
+        }
+        return (await storage.sql.exec<T>(sql, ...params)) as readonly T[];
+      },
+      catch: (cause) =>
+        new SqlError({
+          query: sql,
+          message: "SQL execution failed",
+          cause,
+        }),
+    });
+  });
+
+  const execOne = Effect.fn("EffectSqlStorage.execOne")(function* <T = unknown>(
+    sql: string,
+    ...params: readonly unknown[]
+  ) {
+    return yield* Effect.tryPromise({
+      try: async () => {
+        if (!storage.sql) {
+          throw new Error("SQL storage not available for this Durable Object");
+        }
+        const results = (await storage.sql.exec<T>(
+          sql,
+          ...params
+        )) as readonly T[];
+        return results[0];
+      },
+      catch: (cause) =>
+        new SqlError({
+          query: sql,
+          message: "SQL execution failed",
+          cause,
+        }),
+    });
+  });
+
+  const databaseSize = Effect.try({
+    try: () => {
+      if (!storage.sql) {
+        throw new Error("SQL storage not available for this Durable Object");
+      }
+      return storage.sql.databaseSize;
+    },
+    catch: (cause) =>
+      new SqlError({
+        query: "databaseSize",
+        message: "Failed to get database size",
+        cause,
+      }),
+  });
+
+  const sqlStorage: EffectSqlStorage = {
+    exec,
+    execOne,
+    databaseSize,
+  };
+
+  return {
+    get,
+    put,
+    delete: del,
+    deleteAll,
+    list,
+    getAlarm,
+    setAlarm,
+    deleteAlarm,
+    transaction,
+    sql: sqlStorage,
+  };
+};
