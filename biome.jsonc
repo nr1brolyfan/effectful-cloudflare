@@ -5,6 +5,9 @@
     "rules": {
       "performance": {
         "noNamespaceImport": "off"
+      },
+      "style": {
+        "useFilenamingConvention": "off"
       }
     }
   }
