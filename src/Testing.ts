@@ -2158,3 +2158,197 @@ export const memoryAIGateway = (config?: {
     getUrl,
   };
 };
+
+// ── memoryBrowser ───────────────────────────────────────────────────────
+
+/**
+ * In-memory Browser Rendering implementation for testing.
+ *
+ * Implements the `BrowserBinding` structural interface with:
+ * - Simulated browser sessions (launch/close)
+ * - Simulated page navigation and content
+ * - Mock screenshot and PDF generation
+ * - Mock JavaScript evaluation
+ * - Configurable page content and metadata
+ *
+ * **Note:** This is a test mock. It does NOT:
+ * - Actually render HTML or execute JavaScript
+ * - Generate real screenshots or PDFs
+ * - Connect to Cloudflare Browser Rendering runtime
+ * - Support advanced Puppeteer features
+ *
+ * @param config - Optional configuration
+ * @param config.pageContent - Map of URLs to their HTML content (default: generic HTML)
+ * @param config.evaluationResults - Map of scripts to their evaluation results
+ * @returns BrowserBinding compatible with Browser.layer() and Browser.make()
+ *
+ * @example
+ * ```ts
+ * import { it } from "@effect/vitest"
+ * import { Effect } from "effect"
+ * import { Browser } from "./Browser.js"
+ * import { memoryBrowser } from "./Testing.js"
+ *
+ * it.effect("launches browser and navigates to URL", () =>
+ *   Effect.gen(function*() {
+ *     const binding = memoryBrowser({
+ *       pageContent: {
+ *         "https://example.com": "<html><body><h1>Example Domain</h1></body></html>"
+ *       }
+ *     })
+ *     const browser = yield* Browser
+ *
+ *     const instance = yield* browser.launch({ keep_alive: 60000 })
+ *     const page = yield* Effect.promise(() => instance.newPage())
+ *     yield* browser.navigate(page, "https://example.com")
+ *
+ *     const content = yield* Effect.promise(() => page.content())
+ *     expect(content).toContain("Example Domain")
+ *   }).pipe(Effect.provide(Browser.layer(binding)))
+ * )
+ * ```
+ */
+export const memoryBrowser = (config?: {
+  pageContent?: Record<string, string>;
+  evaluationResults?: Record<string, unknown>;
+}) => {
+  const pageContent = config?.pageContent ?? {};
+  const evaluationResults = config?.evaluationResults ?? {};
+
+  const createMockPage = () => {
+    let currentContent = "<html><body>Mock page</body></html>";
+    let currentTitle = "Mock Page";
+
+    return {
+      goto: (url: string, _options?: unknown): Promise<void> => {
+        // Set content from config or use default
+        currentContent =
+          pageContent[url] ?? `<html><body><h1>Page: ${url}</h1></body></html>`;
+        // Extract title from content if present
+        const titleMatch = currentContent.match(/<title>([^<]+)<\/title>/i);
+        currentTitle = titleMatch?.[1] ?? url;
+        return Promise.resolve();
+      },
+
+      content: (): Promise<string> => {
+        return Promise.resolve(currentContent);
+      },
+
+      title: (): Promise<string> => {
+        return Promise.resolve(currentTitle);
+      },
+
+      screenshot: (_options?: unknown): Promise<ArrayBuffer> => {
+        // Return mock PNG data (1x1 transparent PNG)
+        const mockPngData = new Uint8Array([
+          0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00,
+          0x0d, 0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00,
+          0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4, 0x89,
+          0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9c, 0x63,
+          0x00, 0x01, 0x00, 0x00, 0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4,
+          0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60,
+          0x82,
+        ]);
+        return Promise.resolve(mockPngData.buffer);
+      },
+
+      pdf: (_options?: unknown): Promise<ArrayBuffer> => {
+        // Return mock PDF data (minimal valid PDF)
+        const mockPdfData = new TextEncoder().encode(
+          "%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj 2 0 obj<</Type/Pages/Count 1/Kids[3 0 R]>>endobj 3 0 obj<</Type/Page/MediaBox[0 0 612 792]/Parent 2 0 R/Resources<<>>>>endobj\nxref\n0 4\n0000000000 65535 f\n0000000009 00000 n\n0000000056 00000 n\n0000000115 00000 n\ntrailer<</Size 4/Root 1 0 R>>\nstartxref\n203\n%%EOF"
+        );
+        return Promise.resolve(mockPdfData.buffer as ArrayBuffer);
+      },
+
+      evaluate: <T = unknown>(script: string): Promise<T> => {
+        // Return mock result for script evaluation
+        const result = (evaluationResults[script] as T) ?? ({} as T);
+        return Promise.resolve(result);
+      },
+    };
+  };
+
+  return {
+    launch: (_options?: unknown) => {
+      const mockPage = createMockPage();
+
+      return Promise.resolve({
+        close: (): Promise<void> => Promise.resolve(),
+        newPage: () => Promise.resolve(mockPage),
+      });
+    },
+  };
+};
+
+// ── memoryPipeline ──────────────────────────────────────────────────────
+
+/**
+ * In-memory Pipeline implementation for testing.
+ *
+ * Implements the `PipelineBinding` structural interface with:
+ * - In-memory array storage for sent events
+ * - Support for single event and batch sending
+ * - Event inspection for test verification
+ *
+ * **Note:** This is a test mock. It does NOT:
+ * - Actually send events to R2 or transform via SQL
+ * - Implement batching or rate limiting
+ * - Connect to Cloudflare Pipelines runtime
+ * - Persist events across test runs
+ *
+ * The events are simply stored in an array that tests can inspect to verify
+ * that the expected events were sent with the correct data.
+ *
+ * @returns Object with PipelineBinding interface plus `events` array for inspection
+ *
+ * @example
+ * ```ts
+ * import { it } from "@effect/vitest"
+ * import { Effect } from "effect"
+ * import { Pipeline } from "./Pipeline.js"
+ * import { memoryPipeline } from "./Testing.js"
+ *
+ * it.effect("sends events to pipeline", () =>
+ *   Effect.gen(function*() {
+ *     const binding = memoryPipeline()
+ *     const pipeline = yield* Pipeline
+ *
+ *     yield* pipeline.send({ user_id: "123", event_type: "click" })
+ *     yield* pipeline.sendBatch([
+ *       { user_id: "456", event_type: "view" },
+ *       { user_id: "789", event_type: "purchase", amount: 50 }
+ *     ])
+ *
+ *     // Inspect events that were sent
+ *     expect(binding.events).toHaveLength(3)
+ *     expect(binding.events[0]).toEqual({ user_id: "123", event_type: "click" })
+ *     expect(binding.events[2]).toHaveProperty("amount", 50)
+ *   }).pipe(Effect.provide(Pipeline.layer(binding)))
+ * )
+ * ```
+ */
+export const memoryPipeline = (): {
+  send: (data: object | readonly object[]) => Promise<void>;
+  /**
+   * Array of events that have been sent to the pipeline.
+   * Use this in tests to verify events were sent correctly.
+   */
+  readonly events: object[];
+} => {
+  const events: object[] = [];
+
+  return {
+    events,
+
+    send: (data: object | readonly object[]): Promise<void> => {
+      if (Array.isArray(data)) {
+        // Batch send
+        events.push(...data);
+      } else {
+        // Single event
+        events.push(data);
+      }
+      return Promise.resolve();
+    },
+  };
+};
