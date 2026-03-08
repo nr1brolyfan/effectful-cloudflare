@@ -1,4 +1,5 @@
 /** biome-ignore-all lint/performance/useTopLevelRegex: Each regex is only used once */
+import type { AIBinding } from "./AI.js";
 import type { CacheBinding } from "./Cache.js";
 import type {
   D1Binding,
@@ -1814,5 +1815,91 @@ export const memoryVectorize = (options?: {
     getByIds,
     deleteByIds,
     describe,
+  };
+};
+
+// ── memoryAI ────────────────────────────────────────────────────────────
+
+/**
+ * In-memory Workers AI implementation for testing.
+ *
+ * Implements the `AIBinding` structural interface with:
+ * - Configurable response data for different models
+ * - Support for custom mock responses per model
+ * - Streaming support (returns mock data wrapped in ReadableStream)
+ *
+ * **Note:** This is a test mock. It does NOT:
+ * - Actually run AI inference
+ * - Connect to Cloudflare Workers AI runtime
+ * - Validate model names or input formats
+ *
+ * @param config - Optional configuration
+ * @param config.responses - Map of model names to their mock responses
+ * @returns AIBinding compatible with AI.layer() and AI.make()
+ *
+ * @example
+ * ```ts
+ * import { it } from "@effect/vitest"
+ * import { Effect, Schema } from "effect"
+ * import { AI } from "./AI.js"
+ * import { memoryAI } from "./Testing.js"
+ *
+ * it.effect("runs AI model and returns response", () =>
+ *   Effect.gen(function*() {
+ *     const binding = memoryAI({
+ *       responses: {
+ *         "@cf/meta/llama-3-8b-instruct": { response: "Paris is the capital of France." }
+ *       }
+ *     })
+ *     const ai = yield* AI
+ *
+ *     const result = yield* ai.run<{ response: string }>(
+ *       "@cf/meta/llama-3-8b-instruct",
+ *       { prompt: "What is the capital of France?" }
+ *     )
+ *
+ *     expect(result.response).toBe("Paris is the capital of France.")
+ *   }).pipe(Effect.provide(AI.layer(binding)))
+ * )
+ * ```
+ */
+export const memoryAI = (config?: {
+  responses?: Record<string, unknown>;
+}): AIBinding => {
+  const responses = config?.responses ?? {};
+
+  const run = <T = unknown>(
+    model: string,
+    _inputs: Record<string, unknown>,
+    options?: { stream?: boolean }
+  ): Promise<T> => {
+    // Get mock response for this model (or default to generic response)
+    const mockResponse =
+      (responses[model] as T) ??
+      ({
+        success: true,
+        result: "Mock AI response",
+      } as T);
+
+    // Handle streaming
+    if (options?.stream) {
+      // For streaming, wrap response in ReadableStream
+      const stream = new ReadableStream({
+        start(controller) {
+          const encoder = new TextEncoder();
+          const responseStr = JSON.stringify(mockResponse);
+          controller.enqueue(encoder.encode(responseStr));
+          controller.close();
+        },
+      });
+      return Promise.resolve(stream as T);
+    }
+
+    // Return mock response directly
+    return Promise.resolve(mockResponse);
+  };
+
+  return {
+    run,
   };
 };
