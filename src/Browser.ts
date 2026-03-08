@@ -1,3 +1,26 @@
+/**
+ * @module Browser
+ *
+ * Effect-wrapped Cloudflare Browser Rendering API.
+ *
+ * Provides a Puppeteer-like interface for browser automation running in
+ * Cloudflare Workers. Supports page navigation, screenshots, PDF generation,
+ * and JavaScript evaluation.
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { Browser } from "effectful-cloudflare/Browser"
+ *
+ * const program = Effect.gen(function*() {
+ *   const browser = yield* Browser
+ *   const page = yield* browser.launch()
+ *   yield* browser.navigate(page, "https://example.com")
+ *   const screenshot = yield* browser.screenshot(page)
+ * }).pipe(Effect.provide(Browser.layer(env.BROWSER)))
+ * ```
+ */
+
 import { Data, Effect, Layer, ServiceMap } from "effect";
 
 // ── Binding type ───────────────────────────────────────────────────────

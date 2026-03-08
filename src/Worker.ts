@@ -1,3 +1,28 @@
+/**
+ * @module Worker
+ *
+ * Cloudflare Worker entrypoint utilities.
+ *
+ * Bridges Cloudflare Worker lifecycle events (`fetch`, `scheduled`, `queue`)
+ * to the Effect runtime. Provides:
+ * - `WorkerEnv` service — raw worker environment bindings as a service.
+ * - `ExecutionCtx` service — Effect-wrapped `waitUntil` and `passThroughOnException`.
+ * - `serve()` — create an `ExportedHandler.fetch` from an Effect program.
+ * - `onScheduled()` — create an `ExportedHandler.scheduled` handler.
+ * - `onQueue()` — create an `ExportedHandler.queue` handler.
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { Worker } from "effectful-cloudflare/Worker"
+ *
+ * export default Worker.serve(
+ *   (request) => Effect.succeed(new Response("Hello!")),
+ *   (env, ctx) => Layer.mergeAll(WorkerEnv.layer(env), ExecutionCtx.layer(ctx))
+ * )
+ * ```
+ */
+
 import { Effect, Layer, ServiceMap } from "effect";
 
 // ── WorkerEnv Service ──────────────────────────────────────────────────

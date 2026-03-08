@@ -1,3 +1,30 @@
+/**
+ * @module KV
+ *
+ * Effect-wrapped Cloudflare Workers KV key-value storage.
+ *
+ * Provides a fully typed, Effect-based interface to Cloudflare KV with:
+ * - Automatic JSON serialization/deserialization
+ * - Optional Schema validation (pass a schema to `make`/`layer`)
+ * - `getOrFail` variant that fails with `NotFoundError`
+ * - Metadata and expiration support
+ * - Cursor-based list pagination
+ * - Multi-namespace support via `KVMap` (LayerMap)
+ * - Automatic tracing spans via `Effect.fn`
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { KV } from "effectful-cloudflare/KV"
+ *
+ * const program = Effect.gen(function*() {
+ *   const kv = yield* KV
+ *   yield* kv.put("key", "value")
+ *   const value = yield* kv.getOrFail("key")
+ * }).pipe(Effect.provide(KV.layer(env.MY_KV)))
+ * ```
+ */
+
 import { Data, Effect, Layer, LayerMap, Schema, ServiceMap } from "effect";
 import * as Errors from "./Errors.js";
 import { WorkerEnv } from "./Worker.js";

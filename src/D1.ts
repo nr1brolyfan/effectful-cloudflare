@@ -1,3 +1,29 @@
+/**
+ * @module D1
+ *
+ * Effect-wrapped Cloudflare D1 SQL database.
+ *
+ * Provides a fully typed, Effect-based interface to Cloudflare D1 with:
+ * - Schema-validated queries via `querySchema` / `queryFirstSchema`
+ * - `queryFirstOrFail` variant that fails with `NotFoundError`
+ * - Atomic batch operations
+ * - Raw SQL execution via `exec`
+ * - Built-in migration runner with tracking table
+ * - Multi-database support via `D1Map` (LayerMap)
+ * - Automatic tracing spans via `Effect.fn`
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { D1 } from "effectful-cloudflare/D1"
+ *
+ * const program = Effect.gen(function*() {
+ *   const db = yield* D1
+ *   const rows = yield* db.query("SELECT * FROM users WHERE active = ?", true)
+ * }).pipe(Effect.provide(D1.layer(env.MY_DB)))
+ * ```
+ */
+
 import { Data, Effect, Layer, LayerMap, Schema, ServiceMap } from "effect";
 import * as Errors from "./Errors.js";
 import { WorkerEnv } from "./Worker.js";

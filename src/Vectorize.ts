@@ -1,3 +1,27 @@
+/**
+ * @module Vectorize
+ *
+ * Effect-wrapped Cloudflare Vectorize vector database.
+ *
+ * Provides a fully typed, Effect-based interface to Cloudflare Vectorize with:
+ * - Vector insert, upsert, query, getByIds, deleteByIds
+ * - Index metadata via `describe()`
+ * - Typed errors (`VectorizeError`)
+ * - Automatic tracing spans via `Effect.fn`
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { Vectorize } from "effectful-cloudflare/Vectorize"
+ *
+ * const program = Effect.gen(function*() {
+ *   const vec = yield* Vectorize
+ *   yield* vec.upsert([{ id: "doc-1", values: [0.1, 0.2, 0.3] }])
+ *   const results = yield* vec.query([0.1, 0.2, 0.3], { topK: 5 })
+ * }).pipe(Effect.provide(Vectorize.layer(env.MY_INDEX)))
+ * ```
+ */
+
 import { Data, Effect, Layer, ServiceMap } from "effect";
 
 // ── Binding type ───────────────────────────────────────────────────────

@@ -1,3 +1,28 @@
+/**
+ * @module Queue
+ *
+ * Effect-wrapped Cloudflare Queues (producer and consumer).
+ *
+ * Provides a fully typed, Effect-based interface to Cloudflare Queues with:
+ * - `QueueProducer` service for sending messages
+ * - Schema-validated producer via optional schema parameter
+ * - Consumer handler pattern with auto-ack/retry
+ * - Batch send support
+ * - Multi-queue support via `QueueProducerMap` (LayerMap)
+ * - Automatic tracing spans via `Effect.fn`
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { QueueProducer } from "effectful-cloudflare/Queue"
+ *
+ * const program = Effect.gen(function*() {
+ *   const queue = yield* QueueProducer
+ *   yield* queue.send({ type: "user.created", userId: "123" })
+ * }).pipe(Effect.provide(QueueProducer.layer(env.MY_QUEUE)))
+ * ```
+ */
+
 import { Data, Effect, Layer, LayerMap, Schema, ServiceMap } from "effect";
 import * as Errors from "./Errors.js";
 import { WorkerEnv } from "./Worker.js";

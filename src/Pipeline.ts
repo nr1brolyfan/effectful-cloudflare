@@ -1,3 +1,27 @@
+/**
+ * @module Pipeline
+ *
+ * Effect-wrapped Cloudflare Pipelines (streaming ETL to R2).
+ *
+ * Cloudflare Pipelines allow ingesting structured data records that are
+ * batched, transformed, and written to an R2 bucket. This module wraps
+ * the Pipeline binding with Effect-based error handling.
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { Pipeline } from "effectful-cloudflare/Pipeline"
+ *
+ * const program = Effect.gen(function*() {
+ *   const pipeline = yield* Pipeline
+ *   yield* pipeline.send([
+ *     { event: "page_view", url: "/home", ts: Date.now() },
+ *     { event: "click", target: "signup", ts: Date.now() }
+ *   ])
+ * }).pipe(Effect.provide(Pipeline.layer(env.MY_PIPELINE)))
+ * ```
+ */
+
 import { Data, Effect, Layer, ServiceMap } from "effect";
 
 // ── Binding type ───────────────────────────────────────────────────────

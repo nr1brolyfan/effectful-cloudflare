@@ -1,3 +1,28 @@
+/**
+ * @module Cache
+ *
+ * Effect-wrapped Cloudflare Cache API.
+ *
+ * Provides a fully typed, Effect-based interface to the Cloudflare Cache API with:
+ * - `match` / `matchOrFail` for cache lookups
+ * - `put` / `delete` for cache writes and invalidation
+ * - JSON mode with optional Schema validation via `Cache.json(schema)`
+ * - Default cache and named cache support
+ * - Automatic tracing spans via `Effect.fn`
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { Cache } from "effectful-cloudflare/Cache"
+ *
+ * const program = Effect.gen(function*() {
+ *   const cache = yield* Cache
+ *   yield* cache.put("https://example.com/api/data", new Response("cached"))
+ *   const hit = yield* cache.match("https://example.com/api/data")
+ * }).pipe(Effect.provide(Cache.defaultCache()))
+ * ```
+ */
+
 import { Data, Effect, Layer, Schema, ServiceMap } from "effect";
 import * as Errors from "./Errors.js";
 

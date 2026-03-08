@@ -1,3 +1,16 @@
+/**
+ * @module Errors
+ *
+ * Shared tagged error types used across all effectful-cloudflare service modules.
+ *
+ * Follows Effect v4 error patterns:
+ * - `Data.TaggedError` for internal infrastructure errors (not serializable).
+ * - `Schema.TaggedErrorClass` for domain errors (serializable, with schema).
+ *
+ * All service modules re-use these errors in their error channels alongside
+ * their own module-specific error types.
+ */
+
 import { Data, Schema } from "effect";
 
 // ── Internal errors (no schema, not serializable) ──────────────────────

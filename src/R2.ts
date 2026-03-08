@@ -1,4 +1,34 @@
-// ── src/R2.ts ──────────────────────────────────────────────────────────
+/**
+ * @module R2
+ *
+ * Effect-wrapped Cloudflare Workers R2 object storage.
+ *
+ * This module provides a fully typed, Effect-based interface to Cloudflare R2
+ * with automatic error handling, multipart upload support, presigned URL
+ * generation (AWS Signature V4), and multi-instance management via `R2Map`.
+ *
+ * Key features:
+ * - All operations return `Effect` with typed error channels (`R2Error`, `R2MultipartError`, `R2PresignError`)
+ * - `getOrFail` variant fails with `NotFoundError` for missing objects
+ * - Full `R2Object` return type with body, `text()`, `arrayBuffer()`, etc.
+ * - Multipart uploads with `createMultipartUpload` / `resumeMultipartUpload`
+ * - S3-compatible presigned URLs via `R2.presign`
+ * - Multi-bucket support via `R2Map` (LayerMap)
+ * - Automatic tracing spans via `Effect.fn`
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { R2 } from "effectful-cloudflare/R2"
+ *
+ * const program = Effect.gen(function*() {
+ *   const r2 = yield* R2
+ *   yield* r2.put("greeting.txt", "Hello World")
+ *   const obj = yield* r2.getOrFail("greeting.txt")
+ *   const text = yield* Effect.promise(() => obj.text())
+ * }).pipe(Effect.provide(R2.layer(env.MY_BUCKET)))
+ * ```
+ */
 
 import { Data } from "effect";
 
@@ -58,47 +88,96 @@ export interface R2Binding {
   resumeMultipartUpload(key: string, uploadId: string): R2MultipartUpload;
 }
 /**
- * R2 Object returned from get/put/head operations.
- * Subset of the full R2Object type from @cloudflare/workers-types.
+ * R2 object returned from get/put/head operations.
+ *
+ * Structural subset of the full `R2Object` from `@cloudflare/workers-types`.
+ * Includes both metadata fields and body-reading methods (`text()`, `json()`,
+ * `arrayBuffer()`, `blob()`). The `body` property is a `ReadableStream` for
+ * streaming reads.
+ *
+ * @see {@link R2ObjectInfo} for the metadata-only variant (no body).
  */
 export interface R2Object {
+  /** Read the entire body as an `ArrayBuffer`. */
   arrayBuffer(): Promise<ArrayBuffer>;
+  /** Read the entire body as a `Blob`. */
   blob(): Promise<Blob>;
+  /** Readable stream of the object body. */
   body: ReadableStream;
+  /** Whether the body has already been consumed. */
   bodyUsed: boolean;
+  /** Content checksums (MD5, SHA-1, SHA-256, SHA-384, SHA-512). */
   checksums: R2Checksums;
+  /** User-defined key-value metadata. */
   customMetadata?: Record<string, string>;
+  /** Entity tag uniquely identifying the object version. */
   etag: string;
+  /** ETag formatted for HTTP headers (with quotes). */
   httpEtag: string;
+  /** Standard HTTP metadata (content-type, cache-control, etc.). */
   httpMetadata?: R2HTTPMetadata;
+  /** Parse the body as JSON. */
   json<T = unknown>(): Promise<T>;
+  /** Object key (path) in the bucket. */
   key: string;
+  /** Byte range of the response if a range request was made. */
   range?: R2Range;
+  /** Object size in bytes. */
   size: number;
+  /** Read the entire body as a UTF-8 string. */
   text(): Promise<string>;
+  /** Timestamp when the object was uploaded. */
   uploaded: Date;
+  /** Opaque version identifier. */
   version: string;
+  /** Write object HTTP metadata into an existing `Headers` object. */
   writeHttpMetadata(headers: Headers): void;
 }
 
 /**
- * R2 list result.
+ * Raw R2 list result from the binding.
+ *
+ * Returned by `R2Binding.list()`. Contains the full `R2Object` items with body
+ * methods. For the simplified metadata-only version used by the `R2` service,
+ * see {@link R2ListResult}.
  */
 export interface R2Objects {
+  /** Opaque cursor for fetching the next page. `undefined` when listing is complete. */
   cursor?: string;
+  /** Common prefixes when using a delimiter (for hierarchical listing). */
   delimitedPrefixes: string[];
+  /** Objects matching the list query. */
   objects: R2Object[];
+  /** `true` when there are more results beyond this page. */
   truncated: boolean;
 }
 
 /**
- * R2 Multipart upload handle.
+ * Handle for an in-progress R2 multipart upload.
+ *
+ * Multipart uploads allow uploading large objects in parts (up to 10 000 parts,
+ * each between 5 MB and 5 GB). Parts can be uploaded in parallel and in any
+ * order; the final object is assembled by calling `complete()` with all part
+ * metadata.
+ *
+ * @see {@link R2UploadedPart} for the metadata returned by `uploadPart()`.
  */
 export interface R2MultipartUpload {
+  /** Cancel the multipart upload and delete any uploaded parts. */
   abort(): Promise<void>;
+  /** Assemble the final object from the uploaded parts. */
   complete(uploadedParts: R2UploadedPart[]): Promise<R2Object>;
+  /** Object key this upload targets. */
   key: string;
+  /** Unique identifier for this multipart upload session. */
   uploadId: string;
+  /**
+   * Upload a single part.
+   *
+   * @param partNumber - 1-based part index (must be unique within the upload).
+   * @param value - Part body data.
+   * @returns Metadata for the uploaded part (needed for `complete()`).
+   */
   uploadPart(
     partNumber: number,
     value: ReadableStream | ArrayBuffer | ArrayBufferView | string | Blob
@@ -106,42 +185,72 @@ export interface R2MultipartUpload {
 }
 
 /**
- * Uploaded part metadata.
+ * Metadata for a single uploaded part of a multipart upload.
+ *
+ * Returned by `R2MultipartUpload.uploadPart()` and required when calling
+ * `R2MultipartUpload.complete()` to assemble the final object.
  */
 export interface R2UploadedPart {
+  /** Entity tag identifying this part's content. */
   etag: string;
+  /** 1-based part number matching the `uploadPart()` call. */
   partNumber: number;
 }
 
 /**
- * R2 HTTP metadata.
+ * Standard HTTP metadata stored alongside an R2 object.
+ *
+ * These values map directly to HTTP response headers when the object is served.
+ * Set them via the `httpMetadata` option on `put()` or `createMultipartUpload()`.
  */
 export interface R2HTTPMetadata {
+  /** `Cache-Control` header value. */
   cacheControl?: string;
+  /** Absolute cache expiry date (overrides `cacheControl` max-age). */
   cacheExpiry?: Date;
+  /** `Content-Disposition` header (e.g. `attachment; filename="file.txt"`). */
   contentDisposition?: string;
+  /** `Content-Encoding` header (e.g. `gzip`). */
   contentEncoding?: string;
+  /** `Content-Language` header (e.g. `en-US`). */
   contentLanguage?: string;
+  /** `Content-Type` MIME type (e.g. `application/json`). */
   contentType?: string;
 }
 
 /**
- * R2 checksums.
+ * Content integrity checksums stored with an R2 object.
+ *
+ * Checksums are computed at upload time when provided via `R2PutOptions`
+ * (as hex strings or `ArrayBuffer`). They are returned as raw `ArrayBuffer`
+ * values on read.
  */
 export interface R2Checksums {
+  /** MD5 digest of the object body. */
   md5?: ArrayBuffer;
+  /** SHA-1 digest of the object body. */
   sha1?: ArrayBuffer;
+  /** SHA-256 digest of the object body. */
   sha256?: ArrayBuffer;
+  /** SHA-384 digest of the object body. */
   sha384?: ArrayBuffer;
+  /** SHA-512 digest of the object body. */
   sha512?: ArrayBuffer;
 }
 
 /**
- * R2 range.
+ * Byte range specification for partial object reads.
+ *
+ * At most one of `offset`+`length` or `suffix` should be set.
+ * - `offset` + `length`: read `length` bytes starting at `offset`.
+ * - `suffix`: read the last `suffix` bytes of the object.
  */
 export interface R2Range {
+  /** Number of bytes to read (from `offset`). */
   length?: number;
+  /** Starting byte offset (0-based). */
   offset?: number;
+  /** Read the last N bytes of the object. */
   suffix?: number;
 }
 
@@ -181,39 +290,74 @@ export class R2PresignError extends Data.TaggedError("R2PresignError")<{
 // ── Task 7.3: R2 result types ───────────────────────────────────────────
 
 /**
- * Simplified R2 object metadata (without body).
- * Used by put() and head() operations.
+ * Simplified, immutable R2 object metadata (no body or body-reading methods).
+ *
+ * Returned by `put()` and `head()` operations where the object body is either
+ * not requested or not applicable. Also used as elements of {@link R2ListResult}.
+ *
+ * @see {@link R2Object} for the full object including body.
  */
 export interface R2ObjectInfo {
+  /** Content integrity checksums. */
   readonly checksums: R2Checksums;
+  /** User-defined key-value metadata. */
   readonly customMetadata?: Record<string, string> | undefined;
+  /** Entity tag uniquely identifying the object version. */
   readonly etag: string;
+  /** ETag formatted for HTTP headers (with quotes). */
   readonly httpEtag: string;
+  /** Standard HTTP metadata (content-type, cache-control, etc.). */
   readonly httpMetadata?: R2HTTPMetadata | undefined;
+  /** Object key (path) in the bucket. */
   readonly key: string;
+  /** Byte range if a partial read was performed. */
   readonly range?: R2Range | undefined;
+  /** Object size in bytes. */
   readonly size: number;
+  /** Timestamp when the object was uploaded. */
   readonly uploaded: Date;
+  /** Opaque version identifier. */
   readonly version: string;
 }
 
 /**
- * R2 list operation result.
+ * Paginated result from an R2 list operation.
+ *
+ * Contains simplified {@link R2ObjectInfo} items (no body) along with
+ * pagination state. Pass `cursor` into the next `list()` call to fetch
+ * subsequent pages when `truncated` is `true`.
+ *
+ * @see {@link R2ListOptions} for configuring the list query.
  */
 export interface R2ListResult {
+  /** Opaque cursor for the next page. `undefined` when listing is complete. */
   readonly cursor?: string | undefined;
+  /** Common prefixes when using a delimiter (for hierarchical listing). */
   readonly delimitedPrefixes: readonly string[];
+  /** Object metadata entries matching the query. */
   readonly objects: readonly R2ObjectInfo[];
+  /** `true` when more results are available beyond this page. */
   readonly truncated: boolean;
 }
 
 /**
- * Options for R2 get operations.
+ * Options for R2 `get()` and `getOrFail()` operations.
+ *
+ * Supports conditional reads (`onlyIf`) and partial reads (`range`).
+ * When a condition is not met the binding returns `null`.
  */
 export interface R2GetOptions {
+  /**
+   * Conditional read predicates.
+   * - ETag-based: return the object only if the etag matches/differs.
+   * - Date-based: return only if uploaded before/after the given dates.
+   */
   readonly onlyIf?:
     | { readonly etagMatches?: string; readonly etagDoesNotMatch?: string }
     | { readonly uploadedBefore?: Date; readonly uploadedAfter?: Date };
+  /**
+   * Byte range to read. See {@link R2Range} for semantics.
+   */
   readonly range?: {
     readonly offset?: number;
     readonly length?: number;
@@ -222,21 +366,38 @@ export interface R2GetOptions {
 }
 
 /**
- * Options for R2 put operations.
+ * Options for R2 `put()` operations.
+ *
+ * Allows setting HTTP metadata, custom metadata, content checksums for
+ * integrity verification, and the storage class for cost optimization.
  */
 export interface R2PutOptions {
+  /** User-defined key-value metadata stored with the object. */
   readonly customMetadata?: Record<string, string>;
+  /** Standard HTTP metadata (content-type, cache-control, etc.). */
   readonly httpMetadata?: R2HTTPMetadata;
+  /** Expected MD5 digest for upload integrity verification. */
   readonly md5?: ArrayBuffer | string;
+  /** Expected SHA-1 digest for upload integrity verification. */
   readonly sha1?: ArrayBuffer | string;
+  /** Expected SHA-256 digest for upload integrity verification. */
   readonly sha256?: ArrayBuffer | string;
+  /** Expected SHA-384 digest for upload integrity verification. */
   readonly sha384?: ArrayBuffer | string;
+  /** Expected SHA-512 digest for upload integrity verification. */
   readonly sha512?: ArrayBuffer | string;
+  /** Storage class. `"InfrequentAccess"` reduces cost for rarely-read objects. */
   readonly storageClass?: "Standard" | "InfrequentAccess";
 }
 
 /**
- * Value types accepted by R2 put operations.
+ * Union of body types accepted by R2 `put()` operations.
+ *
+ * - `ReadableStream` — streaming upload
+ * - `ArrayBuffer` / `ArrayBufferView` — binary data
+ * - `string` — UTF-8 text
+ * - `Blob` — binary blob
+ * - `null` — zero-length object
  */
 export type R2PutValue =
   | ReadableStream
@@ -247,41 +408,70 @@ export type R2PutValue =
   | Blob;
 
 /**
- * Options for R2 list operations.
+ * Options for R2 `list()` operations.
+ *
+ * Supports prefix filtering, delimiter-based hierarchical listing, cursor-based
+ * pagination, and optional inclusion of metadata in results.
+ *
+ * @see {@link R2ListResult} for the return type.
  */
 export interface R2ListOptions {
+  /** Opaque cursor from a previous `R2ListResult` for pagination. */
   readonly cursor?: string;
+  /** Delimiter for hierarchical listing (commonly `"/"`). */
   readonly delimiter?: string;
+  /** Which metadata to include in the listed objects. */
   readonly include?: ReadonlyArray<"httpMetadata" | "customMetadata">;
+  /** Maximum number of objects to return (default 1000, max 1000). */
   readonly limit?: number;
+  /** Only return objects whose keys start with this prefix. */
   readonly prefix?: string;
 }
 
 /**
- * Options for R2 multipart upload operations.
+ * Options for R2 `createMultipartUpload()` operations.
+ *
+ * Metadata set here is applied to the final assembled object after
+ * `complete()` is called.
  */
 export interface R2MultipartOptions {
+  /** User-defined key-value metadata for the final object. */
   readonly customMetadata?: Record<string, string>;
+  /** Standard HTTP metadata for the final object. */
   readonly httpMetadata?: R2HTTPMetadata;
+  /** Storage class. `"InfrequentAccess"` reduces cost for rarely-read objects. */
   readonly storageClass?: "Standard" | "InfrequentAccess";
 }
 
 /**
- * Presigned URL generation options.
+ * Options for presigned URL generation via `R2.presign()`.
+ *
+ * @see {@link R2PresignConfig} for the required AWS S3-compatible credentials.
  */
 export interface R2PresignOptions {
-  readonly expiresIn?: number; // seconds
+  /** URL validity duration in seconds (default: 3600 = 1 hour). */
+  readonly expiresIn?: number;
+  /** HTTP metadata to include in the signed headers (e.g. `contentType` for PUT). */
   readonly httpMetadata?: R2HTTPMetadata;
 }
 
 /**
- * Configuration for presigned URL generation.
- * Requires AWS S3-compatible credentials for R2.
+ * AWS S3-compatible credentials for R2 presigned URL generation.
+ *
+ * Create an R2 API token in the Cloudflare dashboard under
+ * **R2 > Manage R2 API Tokens**. The token provides the `accessKeyId` and
+ * `secretAccessKey`. The `accountId` and `bucketName` identify the target.
+ *
+ * @see {@link R2PresignOptions} for per-URL options (expiry, metadata).
  */
 export interface R2PresignConfig {
+  /** S3-compatible access key ID from your R2 API token. */
   readonly accessKeyId: string;
+  /** Cloudflare account ID (found in the dashboard URL). */
   readonly accountId: string;
+  /** Name of the R2 bucket. */
   readonly bucketName: string;
+  /** S3-compatible secret access key from your R2 API token. */
   readonly secretAccessKey: string;
 }
 

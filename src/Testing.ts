@@ -1,4 +1,41 @@
 /** biome-ignore-all lint/performance/useTopLevelRegex: Each regex is only used once */
+
+/**
+ * @module Testing
+ *
+ * In-memory mock implementations for all effectful-cloudflare bindings.
+ *
+ * Provides memory-backed fakes for unit testing without a Cloudflare Workers
+ * runtime. Each mock faithfully simulates the corresponding binding's behavior
+ * including pagination, expiration, metadata, and error semantics.
+ *
+ * Available mocks:
+ * - `memoryKV()` — in-memory KV namespace with expiration and cursor pagination
+ * - `memoryD1()` — in-memory D1 database with basic SQL parsing
+ * - `memoryR2()` — in-memory R2 bucket with metadata and multipart uploads
+ * - `memoryQueue()` — in-memory queue with inspectable message array
+ * - `memoryCache()` — in-memory Cache API
+ * - `memoryDOStorage()` — in-memory Durable Object storage with alarms and SQL
+ * - `memoryVectorize()` — in-memory Vectorize index with cosine similarity
+ * - `memoryAI()` — configurable AI binding mock
+ * - `memoryAIGateway()` — configurable AI Gateway binding mock
+ * - `memoryBrowser()` — in-memory Browser Rendering mock
+ * - `memoryPipeline()` — in-memory Pipeline mock
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { KV } from "effectful-cloudflare/KV"
+ * import * as Testing from "effectful-cloudflare/Testing"
+ *
+ * const program = Effect.gen(function*() {
+ *   const kv = yield* KV
+ *   yield* kv.put("key", "value")
+ *   const v = yield* kv.get("key")
+ * }).pipe(Effect.provide(KV.layer(Testing.memoryKV())))
+ * ```
+ */
+
 import type { AIBinding } from "./AI.js";
 import type { CacheBinding } from "./Cache.js";
 import type {

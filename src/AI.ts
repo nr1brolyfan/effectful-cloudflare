@@ -1,3 +1,29 @@
+/**
+ * @module AI
+ *
+ * Effect-wrapped Cloudflare Workers AI inference.
+ *
+ * Provides a fully typed, Effect-based interface to Workers AI with:
+ * - `run` for untyped model inference
+ * - `runSchema` for schema-validated model responses
+ * - Streaming support via `options.stream`
+ * - Typed errors (`AIError`, `AIModelError`)
+ * - Automatic tracing spans via `Effect.fn`
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { AI } from "effectful-cloudflare/AI"
+ *
+ * const program = Effect.gen(function*() {
+ *   const ai = yield* AI
+ *   const result = yield* ai.run("@cf/meta/llama-3-8b-instruct", {
+ *     messages: [{ role: "user", content: "Hello!" }]
+ *   })
+ * }).pipe(Effect.provide(AI.layer(env.AI)))
+ * ```
+ */
+
 import { Data, Effect, Layer, ServiceMap } from "effect";
 import * as Schema from "effect/Schema";
 import * as Errors from "./Errors.js";

@@ -1,3 +1,35 @@
+/**
+ * @module AIGateway
+ *
+ * Effect-wrapped Cloudflare AI Gateway proxy.
+ *
+ * AI Gateway provides multi-provider AI routing with logging, caching,
+ * rate limiting, and observability. This module wraps the AI Gateway
+ * binding with Effect-based error handling and tracing.
+ *
+ * Provides:
+ * - `run` / `runBatch` for sending requests through the gateway
+ * - `getLog` / `patchLog` for accessing and annotating request logs
+ * - `getUrl` for retrieving the gateway endpoint URL
+ * - Typed errors (`AIGatewayError`, `AIGatewayRequestError`, `AIGatewayResponseError`)
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { AIGateway } from "effectful-cloudflare/AIGateway"
+ *
+ * const program = Effect.gen(function*() {
+ *   const gw = yield* AIGateway
+ *   const response = yield* gw.run({
+ *     provider: "openai",
+ *     endpoint: "chat/completions",
+ *     headers: { Authorization: "Bearer ..." },
+ *     query: { model: "gpt-4", messages: [{ role: "user", content: "Hi" }] }
+ *   })
+ * }).pipe(Effect.provide(AIGateway.layer(env.AI_GATEWAY)))
+ * ```
+ */
+
 import { Data, Effect, Layer, ServiceMap } from "effect";
 
 // ── Binding types ──────────────────────────────────────────────────────

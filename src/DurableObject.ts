@@ -1,3 +1,30 @@
+/**
+ * @module DurableObject
+ *
+ * Effect-wrapped Cloudflare Durable Objects (client, server, and storage).
+ *
+ * Provides:
+ * - `DOClient` service — call Durable Objects from Workers (stub, fetch, fetchJson).
+ * - `EffectDurableObject` abstract base class — build DOs with Effect handlers.
+ * - `EffectStorage` — Effect-wrapped DurableObject key-value storage.
+ * - `EffectSqlStorage` — Effect-wrapped DurableObject SQLite storage.
+ * - WebSocket hibernation support (`acceptWebSocket`, `getWebSockets`).
+ * - Alarm scheduling (`setAlarm`, `getAlarm`, `deleteAlarm`).
+ * - Transactional storage operations.
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { DOClient } from "effectful-cloudflare/DurableObject"
+ *
+ * const program = Effect.gen(function*() {
+ *   const client = yield* DOClient
+ *   const stub = yield* client.stub(env.MY_DO, { type: "name", name: "room-1" })
+ *   const response = yield* client.fetch(stub, new Request("https://do/hello"))
+ * }).pipe(Effect.provide(DOClient.layer()))
+ * ```
+ */
+
 import { Data, Effect, Layer, Schema, ServiceMap } from "effect";
 
 // ── Binding types ──────────────────────────────────────────────────────

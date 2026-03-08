@@ -1,3 +1,25 @@
+/**
+ * @module Hyperdrive
+ *
+ * Effect-wrapped Cloudflare Hyperdrive connection pooling.
+ *
+ * Provides access to Hyperdrive's connection string and connection info for
+ * database drivers. Hyperdrive accelerates database connections by caching
+ * and pooling TCP connections at the Cloudflare edge.
+ *
+ * @example
+ * ```ts
+ * import { Effect } from "effect"
+ * import { Hyperdrive } from "effectful-cloudflare/Hyperdrive"
+ *
+ * const program = Effect.gen(function*() {
+ *   const hd = yield* Hyperdrive
+ *   const connStr = yield* hd.connectionString
+ *   // Pass connStr to your database driver
+ * }).pipe(Effect.provide(Hyperdrive.layer(env.MY_HYPERDRIVE)))
+ * ```
+ */
+
 import { Data, Effect, Layer, ServiceMap } from "effect";
 
 // ── Binding type ───────────────────────────────────────────────────────
