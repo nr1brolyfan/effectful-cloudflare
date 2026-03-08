@@ -661,3 +661,59 @@ Contributions welcome! Please open an issue or PR.
 ## Acknowledgments
 
 Inspired by [`effect-cf`](https://github.com/jbt95/effect-cf)
+
+---
+
+## Comparison: effectful-cloudflare vs effect-cf vs distilled-cloudflare
+
+Three Effect-based libraries for Cloudflare — each solving a different problem.
+
+### At a Glance
+
+| | **effectful-cloudflare** | **effect-cf** | **distilled-cloudflare** |
+|--|--------------------------|---------------|--------------------------|
+| **What it wraps** | Worker runtime bindings (`env.KV`, `env.DB`, etc.) | Worker runtime bindings (`env.KV`, `env.DB`, etc.) | Cloudflare REST Management API (`api.cloudflare.com/client/v4`) |
+| **Runs where** | Inside a Cloudflare Worker | Inside a Cloudflare Worker | Anywhere (Node, Bun, CLI, CI scripts) |
+| **Effect version** | v4 (`ServiceMap.Service`, `LayerMap`, `Effect.fn`) | v3 (`Context.Tag`, `@effect/schema`) | v3-era (`Context.GenericTag`) |
+
+### Service Coverage
+
+| Service | **effectful-cloudflare** | **effect-cf** | **distilled-cloudflare** |
+|---------|--------------------------|---------------|--------------------------|
+| **KV** (runtime read/write) | Yes | Yes | No (namespace management via REST) |
+| **D1** (SQL queries) | Yes | Yes | No (database management via REST) |
+| **R2** (object storage) | Yes | Yes | No (bucket management via REST) |
+| **Queue** (send/consume) | Yes | Yes | No (queue management via REST) |
+| **Durable Objects** | Yes (client + server + storage) | Yes (client + server + storage) | No |
+| **Cache API** | Yes | Yes | No |
+| **Workers AI** | Yes | No | No |
+| **AI Gateway** | Yes | Yes | No |
+| **Vectorize** | Yes | Yes | No |
+| **Hyperdrive** | Yes | Yes | No |
+| **Browser Rendering** | Yes | No | No |
+| **Pipelines** | Yes | No | No |
+| **DNS, Pages, Zones, etc.** | No (infra-level, not runtime) | No | Yes (30 admin API services) |
+| **Worker entrypoint** | Yes (`serve`, `onScheduled`, `onQueue`) | Yes (`serve`, `onSchedule`, `createConsumer`) | No |
+| **In-memory test mocks** | Yes | Yes | No (integration tests against real API) |
+
+### Architecture & Design
+
+| Aspect | **effectful-cloudflare** | **effect-cf** | **distilled-cloudflare** |
+|--------|--------------------------|---------------|--------------------------|
+| **Service pattern** | `ServiceMap.Service` (v4) | `Context.Tag` (v3) | `Context.GenericTag` (v3) |
+| **Multi-instance** | `LayerMap.Service` (named instances) | Not supported | N/A (params per API call) |
+| **Tracing** | `Effect.fn` on every method (auto-spans) | None | None |
+| **Schema integration** | Built-in JSON + optional schema param | Opt-in per module | Mandatory (all types are Schemas) |
+| **Binding handling** | Required at construction (fail-fast) | Optional (fails at call time) | N/A (HTTP client) |
+| **Error design** | `Data.TaggedError` + `Schema.TaggedErrorClass` | `Data.TaggedError` | `Schema.TaggedError` + error categories |
+
+### When to Use Which
+
+| Use case | Recommended |
+|----------|-------------|
+| Building an app that runs inside a Cloudflare Worker | **effectful-cloudflare** |
+| Effect v3 project that already uses effect-cf | **effect-cf** (or migrate to effectful-cloudflare for v4) |
+| Managing CF infrastructure from CLI tools, CI/CD, or external servers | **distilled-cloudflare** |
+| Need both runtime bindings AND admin API | **effectful-cloudflare** (inside Worker) + **distilled-cloudflare** (outside Worker) |
+
+**effectful-cloudflare** and **distilled-cloudflare** are complementary, not competing — one wraps the in-process runtime bindings, the other wraps the remote management HTTP API. **effect-cf** is the Effect v3 predecessor to effectful-cloudflare.
