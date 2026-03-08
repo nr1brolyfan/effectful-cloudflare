@@ -1,4 +1,4 @@
-import { Data } from "effect";
+import { Data, Effect, Layer, Schema, ServiceMap } from "effect";
 
 // ── Binding types ──────────────────────────────────────────────────────
 
@@ -164,6 +164,28 @@ export interface DOSqlStorageBinding {
   ): Promise<readonly T[]>;
 }
 
+// ── Target types ────────────────────────────────────────────────────────
+
+/**
+ * Discriminated union for specifying how to target a Durable Object.
+ *
+ * @example
+ * ```ts
+ * // Target by name (deterministic ID)
+ * const target: DOTarget = { type: "name", name: "chat-room-123" }
+ *
+ * // Target by hex ID string
+ * const target: DOTarget = { type: "id", id: "a1b2c3..." }
+ *
+ * // Create new unique instance
+ * const target: DOTarget = { type: "unique" }
+ * ```
+ */
+export type DOTarget =
+  | { readonly type: "name"; readonly name: string }
+  | { readonly type: "id"; readonly id: string }
+  | { readonly type: "unique"; readonly jurisdiction?: string };
+
 // ── Errors ──────────────────────────────────────────────────────────────
 
 /**
@@ -272,3 +294,191 @@ export class WebSocketError extends Data.TaggedError("WebSocketError")<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
+
+// ── Schema constraint ──────────────────────────────────────────────────
+
+/** A Schema that requires no external services for encoding/decoding. */
+type PureSchema<A> = Schema.Schema<A> & {
+  readonly DecodingServices: never;
+  readonly EncodingServices: never;
+};
+
+// ── DOClient Service ────────────────────────────────────────────────────
+
+/**
+ * Durable Object client service.
+ *
+ * Provides methods for creating stubs, calling DOs, and fetching JSON responses.
+ * This is the caller-side API for interacting with Durable Objects from Workers.
+ *
+ * @example
+ * ```ts
+ * // Create a client
+ * const client = yield* DOClient.make()
+ *
+ * // Get a stub
+ * const stub = yield* client.stub(env.MY_DO, { type: "name", name: "room-123" })
+ *
+ * // Fetch from DO
+ * const response = yield* client.fetch(stub, new Request("https://do/api"))
+ *
+ * // Fetch JSON with schema
+ * const data = yield* client.fetchJson(stub, new Request("https://do/users"), UserSchema)
+ * ```
+ */
+export class DOClient extends ServiceMap.Service<
+  DOClient,
+  {
+    readonly stub: (
+      namespace: DONamespaceBinding,
+      target: DOTarget
+    ) => Effect.Effect<DurableObjectStub, DOError>;
+    readonly fetch: (
+      stub: DurableObjectStub,
+      request: Request
+    ) => Effect.Effect<Response, DOError>;
+    readonly fetchJson: <A = unknown>(
+      stub: DurableObjectStub,
+      request: Request,
+      schema?: PureSchema<A>
+    ) => Effect.Effect<A, DOError>;
+  }
+>()("effectful-cloudflare/DOClient") {
+  /**
+   * Create a DOClient service.
+   *
+   * This service is stateless and provides methods for interacting with
+   * Durable Objects. It does not require any bindings at construction time.
+   *
+   * @returns Effect that yields the DOClient service
+   *
+   * @example
+   * ```ts
+   * const client = yield* DOClient.make()
+   * const stub = yield* client.stub(env.MY_DO, { type: "name", name: "chat-1" })
+   * ```
+   */
+  static make() {
+    return Effect.gen(function* () {
+      // ── stub: resolve target to DurableObjectStub ─────────────────
+
+      const stub = Effect.fn("DOClient.stub")(function* (
+        namespace: DONamespaceBinding,
+        target: DOTarget
+      ) {
+        return yield* Effect.try({
+          try: () => {
+            let id: DurableObjectId;
+            switch (target.type) {
+              case "name":
+                id = namespace.idFromName(target.name);
+                break;
+              case "id":
+                id = namespace.idFromString(target.id);
+                break;
+              case "unique":
+                id = namespace.newUniqueId(
+                  target.jurisdiction
+                    ? { jurisdiction: target.jurisdiction }
+                    : undefined
+                );
+                break;
+              default:
+                throw new Error(
+                  `Invalid target type: ${(target as { type: string }).type}`
+                );
+            }
+            return namespace.get(id);
+          },
+          catch: (cause) =>
+            new DOError({
+              operation: "stub",
+              message: "Failed to create Durable Object stub",
+              cause,
+            }),
+        });
+      });
+
+      // ── fetch: call DO with Request ───────────────────────────────
+
+      const fetch = Effect.fn("DOClient.fetch")(function* (
+        doStub: DurableObjectStub,
+        request: Request
+      ) {
+        return yield* Effect.tryPromise({
+          try: () => doStub.fetch(request),
+          catch: (cause) =>
+            new DOError({
+              operation: "fetch",
+              message: "Failed to fetch from Durable Object",
+              cause,
+            }),
+        });
+      });
+
+      // ── fetchJson: fetch + JSON decode (with optional schema) ─────
+
+      const fetchJson = Effect.fn("DOClient.fetchJson")(function* <A = unknown>(
+        doStub: DurableObjectStub,
+        request: Request,
+        schema?: PureSchema<A>
+      ) {
+        const response = yield* fetch(doStub, request);
+
+        const text = yield* Effect.tryPromise({
+          try: () => response.text(),
+          catch: (cause) =>
+            new DOError({
+              operation: "fetchJson",
+              message: "Failed to read response body",
+              cause,
+            }),
+        });
+
+        const parsed = yield* Effect.try({
+          try: () => JSON.parse(text),
+          catch: (cause) =>
+            new DOError({
+              operation: "fetchJson",
+              message: "Failed to parse JSON response",
+              cause,
+            }),
+        });
+
+        if (!schema) {
+          return parsed as A;
+        }
+
+        return yield* Effect.try({
+          try: () => Schema.decodeUnknownSync(schema)(parsed) as A,
+          catch: (cause) =>
+            new DOError({
+              operation: "fetchJson",
+              message: "Failed to validate response schema",
+              cause,
+            }),
+        });
+      });
+
+      return DOClient.of({ stub, fetch, fetchJson });
+    });
+  }
+
+  /**
+   * Create a layer that provides the DOClient service.
+   *
+   * @returns Layer providing DOClient
+   *
+   * @example
+   * ```ts
+   * const program = Effect.gen(function* () {
+   *   const client = yield* DOClient
+   *   const stub = yield* client.stub(env.MY_DO, { type: "name", name: "room" })
+   *   return yield* client.fetch(stub, new Request("https://do/status"))
+   * }).pipe(Effect.provide(DOClient.layer()))
+   * ```
+   */
+  static layer() {
+    return Layer.effect(DOClient, DOClient.make());
+  }
+}
