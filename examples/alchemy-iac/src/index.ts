@@ -9,11 +9,11 @@
  */
 
 import { Effect, Layer, Schema } from "effect";
-import { D1 } from "../../../src/D1.js";
-import { KV } from "../../../src/KV.js";
-import { QueueProducer } from "../../../src/Queue.js";
-import { R2 } from "../../../src/R2.js";
-import { serve } from "../../../src/Worker.js";
+import { D1, type D1Binding } from "effectful-cloudflare/D1";
+import { KV, type KVBinding } from "effectful-cloudflare/KV";
+import { type QueueBinding, QueueProducer } from "effectful-cloudflare/Queue";
+import { R2, type R2Binding } from "effectful-cloudflare/R2";
+import { serve } from "effectful-cloudflare/Worker";
 
 // ── Schemas ────────────────────────────────────────────────────────────────
 
@@ -311,16 +311,16 @@ const handler = (request: Request) =>
 // ── Worker Export ──────────────────────────────────────────────────────────
 
 export default serve(handler, (env) => {
-  // In a real Alchemy project, bindings are typed from alchemy.run.ts
-  // For this example, we use type assertions
+  const { CACHE_KV, ANALYTICS_DB, CONTENT_STORAGE, TASKS_QUEUE } = env as {
+    CACHE_KV: KVBinding;
+    ANALYTICS_DB: D1Binding;
+    CONTENT_STORAGE: R2Binding;
+    TASKS_QUEUE: QueueBinding;
+  };
   return Layer.mergeAll(
-    // biome-ignore lint/suspicious/noExplicitAny: example code with untyped env
-    KV.layer(env.CACHE_KV as any, CacheValue),
-    // biome-ignore lint/suspicious/noExplicitAny: example code with untyped env
-    D1.layer(env.ANALYTICS_DB as any),
-    // biome-ignore lint/suspicious/noExplicitAny: example code with untyped env
-    R2.layer(env.CONTENT_STORAGE as any),
-    // biome-ignore lint/suspicious/noExplicitAny: example code with untyped env
-    QueueProducer.json(TaskMessage).layer(env.TASKS_QUEUE as any)
+    KV.layer(CACHE_KV, CacheValue),
+    D1.layer(ANALYTICS_DB),
+    R2.layer(CONTENT_STORAGE),
+    QueueProducer.json(TaskMessage).layer(TASKS_QUEUE)
   );
 });

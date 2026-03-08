@@ -48,16 +48,8 @@ export interface R2Binding {
     }
   ): Promise<R2MultipartUpload>;
   delete(keys: string | string[]): Promise<void>;
-  get(
-    key: string,
-    options?: {
-      onlyIf?:
-        | { etagMatches?: string; etagDoesNotMatch?: string }
-        | { uploadedBefore?: Date; uploadedAfter?: Date };
-      range?: { offset?: number; length?: number; suffix?: number };
-    }
-  ): Promise<R2Object | null>;
-  head(key: string): Promise<R2Object | null>;
+  get(key: string, options?: unknown): Promise<R2Object | null>;
+  head(key: string): Promise<R2ObjectMeta | null>;
   list(options?: {
     prefix?: string;
     delimiter?: string;
@@ -84,7 +76,7 @@ export interface R2Binding {
       sha512?: ArrayBuffer | string;
       storageClass?: "Standard" | "InfrequentAccess";
     }
-  ): Promise<R2Object | null>;
+  ): Promise<R2ObjectMeta | null>;
   resumeMultipartUpload(key: string, uploadId: string): R2MultipartUpload;
 }
 /**
@@ -147,7 +139,7 @@ export interface R2Objects {
   /** Common prefixes when using a delimiter (for hierarchical listing). */
   delimitedPrefixes: string[];
   /** Objects matching the list query. */
-  objects: R2Object[];
+  objects: R2ObjectMeta[];
   /** `true` when there are more results beyond this page. */
   truncated: boolean;
 }
@@ -162,11 +154,32 @@ export interface R2Objects {
  *
  * @see {@link R2UploadedPart} for the metadata returned by `uploadPart()`.
  */
+/**
+ * Metadata-only R2 object returned from operations that don't include a body
+ * (e.g., `head()`, `R2MultipartUpload.complete()`, `put()`).
+ *
+ * This type matches the minimal shape returned by Cloudflare's `R2Object`
+ * (without body methods). Our service wraps this into richer types.
+ */
+export interface R2ObjectMeta {
+  checksums: R2Checksums;
+  customMetadata?: Record<string, string>;
+  etag: string;
+  httpEtag: string;
+  httpMetadata?: R2HTTPMetadata;
+  key: string;
+  range?: R2Range;
+  size: number;
+  uploaded: Date;
+  version: string;
+  writeHttpMetadata(headers: Headers): void;
+}
+
 export interface R2MultipartUpload {
   /** Cancel the multipart upload and delete any uploaded parts. */
   abort(): Promise<void>;
-  /** Assemble the final object from the uploaded parts. */
-  complete(uploadedParts: R2UploadedPart[]): Promise<R2Object>;
+  /** Assemble the final object from the uploaded parts. Returns metadata only (no body). */
+  complete(uploadedParts: R2UploadedPart[]): Promise<R2ObjectMeta>;
   /** Object key this upload targets. */
   key: string;
   /** Unique identifier for this multipart upload session. */

@@ -9,18 +9,12 @@
  * - Tagged error handling
  */
 
-import type { D1Database, KVNamespace } from "@cloudflare/workers-types";
 import { Effect, Layer, Schema } from "effect";
-import { D1 } from "../../../src/D1.js";
-import { KV } from "../../../src/KV.js";
-import { serve } from "../../../src/Worker.js";
+import { D1, type D1Binding } from "effectful-cloudflare/D1";
+import { KV, type KVBinding } from "effectful-cloudflare/KV";
+import { serve } from "effectful-cloudflare/Worker";
 
 // ── Environment Type ────────────────────────────────────────────────────────
-
-interface Env {
-  readonly MY_DB: D1Database;
-  readonly MY_KV: KVNamespace;
-}
 
 // ── User Schema ────────────────────────────────────────────────────────────
 
@@ -202,11 +196,10 @@ const handler = (request: Request) =>
 
 // ── Worker Export ────────────────────────────────────────────────────────
 
-export default serve(handler, (env) =>
-  Layer.mergeAll(
-    // KV layer with User schema validation
-    KV.layer((env as unknown as Env).MY_KV, User),
-    // D1 layer
-    D1.layer((env as unknown as Env).MY_DB)
-  )
-);
+export default serve(handler, (env) => {
+  const { MY_KV, MY_DB } = env as {
+    MY_KV: KVBinding;
+    MY_DB: D1Binding;
+  };
+  return Layer.mergeAll(KV.layer(MY_KV, User), D1.layer(MY_DB));
+});

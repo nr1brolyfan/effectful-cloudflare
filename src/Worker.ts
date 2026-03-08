@@ -16,7 +16,7 @@
  * import { Effect } from "effect"
  * import { Worker } from "effectful-cloudflare/Worker"
  *
- * export default Worker.serve(
+ * export default Worker.serve<MyEnv>(
  *   (request) => Effect.succeed(new Response("Hello!")),
  *   (env, ctx) => Layer.mergeAll(WorkerEnv.layer(env), ExecutionCtx.layer(ctx))
  * )
@@ -148,14 +148,16 @@ export class ExecutionCtx extends ServiceMap.Service<
  * import { Effect, Layer } from "effect"
  * import { Worker, KV } from "effectful-cloudflare"
  *
- * export default Worker.serve(
+ * interface Env { readonly MY_KV: KVBinding }
+ *
+ * export default Worker.serve<Env>(
  *   (request) => Effect.gen(function*() {
  *     const kv = yield* KV
  *     const value = yield* kv.get("hello")
  *     return new Response(value ?? "not found")
  *   }),
  *   (env, ctx) => Layer.mergeAll(
- *     KV.layer(env.MY_KV as KVBinding),
+ *     KV.layer(env.MY_KV),
  *     Worker.ExecutionCtx.layer(ctx),
  *   )
  * )
@@ -210,7 +212,7 @@ export const serve = <E, R>(
  *     yield* Effect.log(`Scheduled at ${controller.scheduledTime}`)
  *   }),
  *   (env, ctx) => Layer.mergeAll(
- *     KV.layer(env.MY_KV as KVBinding),
+ *     KV.layer(env.MY_KV),
  *     Worker.ExecutionCtx.layer(ctx),
  *   )
  * )
@@ -255,7 +257,7 @@ export const onScheduled = <E, R>(
  *     }
  *   }),
  *   (env, ctx) => Layer.mergeAll(
- *     KV.layer(env.MY_KV as KVBinding),
+ *     KV.layer(env.MY_KV),
  *     Worker.ExecutionCtx.layer(ctx),
  *   )
  * )

@@ -15,11 +15,12 @@
   },
   "dependencies": {
     "effect": "^4.0.0-beta",
-    "effectful-cloudflare": "workspace:*"
+    "effectful-cloudflare": "file:../../"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260128.0",
-    "alchemy": "^1.0.0",
+    "@types/node": "^22.15.0",
+    "alchemy": "^0.87.0",
     "dotenv": "^16.4.5",
     "typescript": "^5.9.3"
   }

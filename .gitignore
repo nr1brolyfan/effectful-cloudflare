@@ -15,6 +15,14 @@ dist
 dist-ssr
 *.local
 
+# Alchemy directories
+.alchemy/
+**/.alchemy/
+
+# Wrangler
+.wrangler/
+**/.wrangler/
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json

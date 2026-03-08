@@ -1209,9 +1209,9 @@ export const memoryQueue = (): QueueBinding<unknown> & {
       return Promise.resolve();
     },
 
-    sendBatch: <T>(
-      batch: ReadonlyArray<{
-        body: T;
+    sendBatch: (
+      batch: Iterable<{
+        body: unknown;
         contentType?: string;
         delaySeconds?: number;
       }>

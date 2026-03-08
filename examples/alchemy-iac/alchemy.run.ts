@@ -26,7 +26,7 @@ config({ path: ".env" });
 
 const app = await alchemy("effectful-cloudflare-example", {
   stage: process.env.STAGE || "development",
-  password: process.env.ALCHEMY_PASSWORD,
+  password: process.env.ALCHEMY_PASSWORD || "dev-password",
 });
 
 const stage = app.stage;
@@ -67,22 +67,16 @@ const tasksQueue = await AlchemyQueue("tasks-queue", {
 
 // ── 3. Define Worker ───────────────────────────────────────────────────────
 
-const worker = await Worker("example-worker", {
+const workerProps = {
   name: `effectful-example-${stage}`,
   entrypoint: "./src/index.ts",
-  compatibility: "node",
+  compatibility: "node" as const,
   bindings: {
     CACHE_KV: cacheKv,
     ANALYTICS_DB: analyticsDb,
     CONTENT_STORAGE: contentBucket,
     TASKS_QUEUE: tasksQueue,
   },
-  // Development: no routes (uses *.workers.dev)
-  // Production: add custom domains
-  routes:
-    stage === "production"
-      ? [{ pattern: "example.effectful-cloudflare.com/*" }]
-      : undefined,
   dev: {
     port: 8787,
   },
@@ -96,7 +90,13 @@ const worker = await Worker("example-worker", {
       headSamplingRate: 1.0,
     },
   },
-});
+  // Production: add custom domains. Development: uses *.workers.dev
+  ...(stage === "production" && {
+    routes: [{ pattern: "example.effectful-cloudflare.com/*" }],
+  }),
+};
+
+const worker = await Worker("example-worker", workerProps);
 
 // ── 4. Finalize Deployment ─────────────────────────────────────────────────
 

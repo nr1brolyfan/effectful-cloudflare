@@ -10,7 +10,7 @@
   },
   "dependencies": {
     "effect": "^4.0.0-beta",
-    "effectful-cloudflare": "workspace:*"
+    "effectful-cloudflare": "file:../../"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^4.20260128.0",

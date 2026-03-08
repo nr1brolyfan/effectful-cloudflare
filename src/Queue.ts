@@ -45,15 +45,18 @@ import { WorkerEnv } from "./Worker.js";
  * const binding: QueueBinding = Testing.memoryQueue()
  * ```
  */
+/** Content type for queue messages. Matches Cloudflare's `QueueContentType`. */
+export type QueueContentType = "bytes" | "json" | "text" | "v8";
+
 export interface QueueBinding<T = unknown> {
   send(
     message: T,
-    options?: { contentType?: string; delaySeconds?: number }
+    options?: { contentType?: QueueContentType; delaySeconds?: number }
   ): Promise<void>;
   sendBatch(
-    messages: ReadonlyArray<{
+    messages: Iterable<{
       body: T;
-      contentType?: string;
+      contentType?: QueueContentType;
       delaySeconds?: number;
     }>
   ): Promise<void>;
@@ -139,10 +142,10 @@ export class QueueConsumerError extends Data.TaggedError("QueueConsumerError")<{
  */
 export interface QueueSendOptions {
   /**
-   * MIME type of the message content.
-   * @default "text/plain"
+   * Content type of the message. Determines how the message body is serialized.
+   * @default "json"
    */
-  readonly contentType?: string;
+  readonly contentType?: QueueContentType;
 
   /**
    * Delay in seconds before the message becomes visible.
@@ -170,10 +173,10 @@ export interface QueueBatchMessage<T> {
   readonly body: T;
 
   /**
-   * MIME type of the message content.
-   * @default "text/plain"
+   * Content type of the message. Determines how the message body is serialized.
+   * @default "json"
    */
-  readonly contentType?: string;
+  readonly contentType?: QueueContentType;
 
   /**
    * Delay in seconds before the message becomes visible.
@@ -363,7 +366,7 @@ export class QueueProducer extends ServiceMap.Service<
 
           return yield* baseProducer.send(json, {
             ...options,
-            contentType: "application/json",
+            contentType: "json",
           });
         });
 
@@ -398,7 +401,7 @@ export class QueueProducer extends ServiceMap.Service<
 
                 return {
                   body: json,
-                  contentType: "application/json",
+                  contentType: "json" as const,
                   ...(msg.delaySeconds !== undefined && {
                     delaySeconds: msg.delaySeconds,
                   }),
