@@ -66,6 +66,20 @@ export class CacheError extends Data.TaggedError("CacheError")<{
   readonly cause?: unknown;
 }> {}
 
+// ── Schema constraint ──────────────────────────────────────────────────
+
+/**
+ * Schema constraint for Cache JSON mode.
+ *
+ * Requires that the schema has no service dependencies (DecodingServices and
+ * EncodingServices are both `never`). This ensures that all encode/decode
+ * operations can run without requiring additional services in the Effect context.
+ */
+type PureSchema<A> = Schema.Schema<A> & {
+  readonly DecodingServices: never;
+  readonly EncodingServices: never;
+};
+
 // ── Cache Service ──────────────────────────────────────────────────────
 
 /**
@@ -268,7 +282,7 @@ export class Cache extends ServiceMap.Service<
    * }).pipe(Effect.provide(layer))
    * ```
    */
-  static json = <A>(schema: Schema.Schema<A>) => ({
+  static json = <A>(schema: PureSchema<A>) => ({
     make: (binding: CacheBinding) =>
       Effect.gen(function* () {
         const baseCache = yield* Cache.make(binding);
