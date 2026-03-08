@@ -144,35 +144,45 @@ export interface KVListResult {
   readonly list_complete: boolean;
 }
 
+// ── Schema constraint ──────────────────────────────────────────────────
+
+/** A Schema that requires no external services for encoding/decoding. */
+type PureSchema<A> = Schema.Schema<A> & {
+  readonly DecodingServices: never;
+  readonly EncodingServices: never;
+};
+
 // ── KV Service ─────────────────────────────────────────────────────────
 
 /**
- * KV service — Effect-wrapped Cloudflare Workers KV.
+ * KV service — Effect-wrapped Cloudflare Workers KV with built-in JSON serialization.
+ *
+ * All values are automatically JSON serialized/deserialized. When used without
+ * a schema, values are `unknown`. When used with a schema, values are fully typed.
  *
  * Provides Effect-based operations for Cloudflare Workers KV storage with:
+ * - Built-in JSON serialization (no manual stringify/parse)
+ * - Optional schema validation for full type safety
  * - Automatic error handling and typed errors
- * - Schema validation support via `.json()` factory
  * - Multi-instance support via `KVMap`
  * - Automatic tracing with `Effect.fn`
  *
  * @example
  * ```ts
- * // Single instance
- * const kvLayer = KV.layer(env.MY_KV)
- *
+ * // Untyped — values are `unknown`
  * const program = Effect.gen(function*() {
  *   const kv = yield* KV
- *   const value = yield* kv.get("key")
- *   yield* kv.put("key", "value", { expirationTtl: 3600 })
- * })
+ *   yield* kv.put("key", { any: "value" })
+ *   const value: unknown = yield* kv.get("key")
+ * }).pipe(Effect.provide(KV.layer(env.MY_KV)))
  *
- * // Schema-validated JSON mode
+ * // Typed with schema — values are fully typed
  * const UserSchema = Schema.Struct({ id: Schema.String, name: Schema.String })
- * const userKV = KV.json(UserSchema)
  * const program2 = Effect.gen(function*() {
  *   const kv = yield* KV
- *   const user = yield* kv.get("user:123") // fully typed
- * }).pipe(Effect.provide(userKV.layer(env.MY_KV)))
+ *   yield* kv.put("user:123", { id: "123", name: "Alice" })  // typechecked
+ *   const user = yield* kv.get("user:123")  // User | null
+ * }).pipe(Effect.provide(KV.layer(env.MY_KV, UserSchema)))
  * ```
  */
 export class KV extends ServiceMap.Service<
@@ -181,18 +191,18 @@ export class KV extends ServiceMap.Service<
     readonly get: (
       key: string,
       options?: KVGetOptions
-    ) => Effect.Effect<string | null, KVError>;
+    ) => Effect.Effect<unknown, KVError>;
     readonly getOrFail: (
       key: string,
       options?: KVGetOptions
-    ) => Effect.Effect<string, KVError | Errors.NotFoundError>;
+    ) => Effect.Effect<unknown, KVError | Errors.NotFoundError>;
     readonly getWithMetadata: <M = unknown>(
       key: string,
       options?: KVGetOptions
-    ) => Effect.Effect<KVValueWithMetadata<string | null, M>, KVError>;
+    ) => Effect.Effect<KVValueWithMetadata<unknown, M>, KVError>;
     readonly put: (
       key: string,
-      value: string,
+      value: unknown,
       options?: KVPutOptions
     ) => Effect.Effect<void, KVError>;
     readonly delete: (key: string) => Effect.Effect<void, KVError>;
@@ -204,29 +214,55 @@ export class KV extends ServiceMap.Service<
   /**
    * Create a KV service from a binding.
    *
-   * This static method wraps all KV operations in Effect programs with:
-   * - Automatic error handling via `Effect.tryPromise`
-   * - Typed errors (`KVError`, `NotFoundError`)
-   * - Automatic tracing spans via `Effect.fn`
+   * All values are automatically JSON serialized on write and deserialized
+   * on read. Pass an optional schema for full type safety and validation.
    *
    * @param binding - KV namespace binding from worker environment
+   * @param schema - Optional schema for encoding/decoding values
    * @returns Effect that yields the KV service
    *
    * @example
    * ```ts
-   * const program = Effect.gen(function*() {
-   *   const kv = yield* KV.make(env.MY_KV)
-   *   const value = yield* kv.get("key")
-   * })
+   * // Untyped
+   * const kv = yield* KV.make(env.MY_KV)
+   * yield* kv.put("key", { hello: "world" })
+   *
+   * // Typed with schema
+   * const kv = yield* KV.make(env.MY_KV, UserSchema)
+   * yield* kv.put("user:1", { id: "1", name: "Alice" })  // typechecked
    * ```
    */
-  static make = (binding: KVBinding) =>
-    Effect.gen(function* () {
+  static make<A = unknown>(binding: KVBinding, schema?: PureSchema<A>) {
+    return Effect.gen(function* () {
+      // ── Serialization helpers ──────────────────────────────────────
+      const encode = schema ? Schema.encodeSync(schema) : undefined;
+      const decode = schema ? Schema.decodeUnknownSync(schema) : undefined;
+
+      const serialize = (value: unknown, key: string) =>
+        Effect.try({
+          try: () => {
+            const toEncode = encode ? encode(value as A) : value;
+            return JSON.stringify(toEncode);
+          },
+          catch: (cause) => new KVError({ operation: "put", key, cause }),
+        });
+
+      const deserialize = (raw: string, key: string) =>
+        Effect.try({
+          try: () => {
+            const parsed = JSON.parse(raw);
+            return decode ? decode(parsed) : (parsed as unknown);
+          },
+          catch: (cause) => new KVError({ operation: "get", key, cause }),
+        });
+
+      // ── Service methods ───────────────────────────────────────────
+
       const get = Effect.fn("KV.get")(function* (
         key: string,
         options?: KVGetOptions
       ) {
-        return yield* Effect.tryPromise({
+        const raw = yield* Effect.tryPromise({
           try: () =>
             binding.get(key, {
               type: "text",
@@ -236,6 +272,12 @@ export class KV extends ServiceMap.Service<
             }),
           catch: (cause) => new KVError({ operation: "get", key, cause }),
         });
+
+        if (raw === null) {
+          return null;
+        }
+
+        return yield* deserialize(raw, key);
       });
 
       const getOrFail = Effect.fn("KV.getOrFail")(function* (
@@ -257,19 +299,14 @@ export class KV extends ServiceMap.Service<
       const getWithMetadata = Effect.fn("KV.getWithMetadata")(function* <
         M = unknown,
       >(key: string, options?: KVGetOptions) {
-        return yield* Effect.tryPromise({
-          try: async () => {
-            const result = await binding.getWithMetadata<M>(key, {
+        const result = yield* Effect.tryPromise({
+          try: () =>
+            binding.getWithMetadata<M>(key, {
               type: "text",
               ...(options?.cacheTtl !== undefined && {
                 cacheTtl: options.cacheTtl,
               }),
-            });
-            return {
-              value: result.value,
-              metadata: result.metadata,
-            } satisfies KVValueWithMetadata<string | null, M>;
-          },
+            }),
           catch: (cause) =>
             new KVError({
               operation: "getWithMetadata",
@@ -277,15 +314,29 @@ export class KV extends ServiceMap.Service<
               cause,
             }),
         });
+
+        if (result.value === null) {
+          return {
+            value: null,
+            metadata: result.metadata,
+          } satisfies KVValueWithMetadata<unknown, M>;
+        }
+
+        const decoded = yield* deserialize(result.value, key);
+        return {
+          value: decoded,
+          metadata: result.metadata,
+        } satisfies KVValueWithMetadata<unknown, M>;
       });
 
       const put = Effect.fn("KV.put")(function* (
         key: string,
-        value: string,
+        value: unknown,
         options?: KVPutOptions
       ) {
+        const json = yield* serialize(value, key);
         return yield* Effect.tryPromise({
-          try: () => binding.put(key, value, options),
+          try: () => binding.put(key, json, options),
           catch: (cause) => new KVError({ operation: "put", key, cause }),
         });
       });
@@ -313,11 +364,10 @@ export class KV extends ServiceMap.Service<
         list,
       };
     });
+  }
 
   /**
-   * Create a Layer from a KV binding.
-   *
-   * This is the standard way to provide KV service to Effect programs.
+   * Create a Layer from a KV binding (untyped — values are `unknown`).
    *
    * @param binding - KV namespace binding from worker environment
    * @returns Layer providing KV service
@@ -328,183 +378,38 @@ export class KV extends ServiceMap.Service<
    *
    * const program = Effect.gen(function*() {
    *   const kv = yield* KV
-   *   yield* kv.put("key", "value")
+   *   yield* kv.put("key", { any: "value" })
    * }).pipe(Effect.provide(layer))
    * ```
    */
-  static layer = (binding: KVBinding) => Layer.effect(this, this.make(binding));
+  static layer(binding: KVBinding): Layer.Layer<KV>;
 
   /**
-   * Create schema-validated KV variant (JSON mode).
+   * Create a Layer from a KV binding with schema validation (fully typed).
    *
-   * Returns a factory with `make` and `layer` methods that automatically:
-   * - Encode values to JSON before storing
-   * - Decode JSON values after retrieval
-   * - Validate against the provided schema
-   * - Add `SchemaError` to the error channel
-   *
-   * @param schema - Schema.Schema for encoding/decoding values
-   * @returns Factory with `make` and `layer` methods
+   * @param binding - KV namespace binding from worker environment
+   * @param schema - Schema for encoding/decoding values
+   * @returns Layer providing KV service
    *
    * @example
    * ```ts
-   * const UserSchema = Schema.Struct({
-   *   id: Schema.String,
-   *   name: Schema.String,
-   *   email: Schema.String,
-   * })
-   * type User = Schema.Schema.Type<typeof UserSchema>
-   *
-   * const userKV = KV.json(UserSchema)
-   * const layer = userKV.layer(env.USERS_KV)
+   * const UserSchema = Schema.Struct({ id: Schema.String, name: Schema.String })
+   * const layer = KV.layer(env.MY_KV, UserSchema)
    *
    * const program = Effect.gen(function*() {
    *   const kv = yield* KV
-   *   // Fully typed - returns User | null
-   *   const user: User | null = yield* kv.get("user:123")
-   *   // Fully typed - accepts User
-   *   yield* kv.put("user:456", { id: "456", name: "Bob", email: "bob@x.com" })
+   *   yield* kv.put("user:1", { id: "1", name: "Alice" })  // typechecked
+   *   const user = yield* kv.get("user:1")  // User | null
    * }).pipe(Effect.provide(layer))
    * ```
    */
-  static json = <A>(schema: Schema.Schema<A>) => ({
-    make: (binding: KVBinding) =>
-      Effect.gen(function* () {
-        const baseKV = yield* KV.make(binding);
+  static layer<A>(binding: KVBinding, schema: PureSchema<A>): Layer.Layer<KV>;
 
-        const get = Effect.fn("KV.json.get")(function* (
-          key: string,
-          options?: KVGetOptions
-        ) {
-          const rawValue = yield* baseKV.get(key, options);
-          if (rawValue === null) {
-            return null as A | null;
-          }
-
-          const parsed = yield* Effect.try({
-            try: () => JSON.parse(rawValue),
-            catch: (cause) =>
-              new Errors.SchemaError({
-                message: `Failed to parse JSON for key "${key}"`,
-                cause: cause as Error,
-              }),
-          });
-
-          return yield* Schema.decodeUnknownEffect(schema)(parsed).pipe(
-            Effect.mapError(
-              (cause) =>
-                new Errors.SchemaError({
-                  message: `Schema validation failed for key "${key}"`,
-                  cause: cause as Error,
-                })
-            )
-          );
-        });
-
-        const getOrFail = Effect.fn("KV.json.getOrFail")(function* (
-          key: string,
-          options?: KVGetOptions
-        ) {
-          const value = yield* get(key, options);
-          if (value === null) {
-            return yield* Effect.fail(
-              new Errors.NotFoundError({
-                resource: "KV",
-                key,
-              })
-            );
-          }
-          return value;
-        });
-
-        const getWithMetadata = Effect.fn("KV.json.getWithMetadata")(function* <
-          M = unknown,
-        >(key: string, options?: KVGetOptions) {
-          const { value: rawValue, metadata } =
-            yield* baseKV.getWithMetadata<M>(key, options);
-
-          if (rawValue === null) {
-            return {
-              value: null as A | null,
-              metadata,
-            } satisfies KVValueWithMetadata<A | null, M>;
-          }
-
-          const parsed = yield* Effect.try({
-            try: () => JSON.parse(rawValue),
-            catch: (cause) =>
-              new Errors.SchemaError({
-                message: `Failed to parse JSON for key "${key}"`,
-                cause: cause as Error,
-              }),
-          });
-
-          const decoded: A = yield* Schema.decodeUnknownEffect(schema)(
-            parsed
-          ).pipe(
-            Effect.mapError(
-              (cause) =>
-                new Errors.SchemaError({
-                  message: `Schema validation failed for key "${key}"`,
-                  cause: cause as Error,
-                })
-            )
-          );
-
-          return {
-            value: decoded,
-            metadata,
-          } satisfies KVValueWithMetadata<A, M>;
-        });
-
-        const put = Effect.fn("KV.json.put")(function* (
-          key: string,
-          value: A,
-          options?: KVPutOptions
-        ) {
-          const encoded = yield* Schema.encodeEffect(schema)(value).pipe(
-            Effect.mapError(
-              (cause) =>
-                new Errors.SchemaError({
-                  message: `Schema encoding failed for key "${key}"`,
-                  cause: cause as Error,
-                })
-            )
-          );
-
-          const json = yield* Effect.try({
-            try: () => JSON.stringify(encoded),
-            catch: (cause) =>
-              new Errors.SchemaError({
-                message: `Failed to stringify JSON for key "${key}"`,
-                cause: cause as Error,
-              }),
-          });
-
-          return yield* baseKV.put(key, json, options);
-        });
-
-        // Return service with typed methods
-        // Note: This object is structurally compatible with KV service,
-        // but uses generic type A instead of string for values.
-        return {
-          get,
-          getOrFail,
-          getWithMetadata,
-          put,
-          delete: baseKV.delete,
-          list: baseKV.list,
-        };
-      }),
-    layer: (binding: KVBinding) =>
-      Layer.effect(
-        KV,
-        // Type assertion is safe: we provide a KV-compatible service with
-        // schema-validated types (A instead of string). The Layer system
-        // handles this correctly at runtime since the shape is identical.
-        KV.json(schema).make(binding) as unknown as ReturnType<typeof KV.make>
-      ),
-  });
+  static layer<A>(binding: KVBinding, schema?: PureSchema<A>) {
+    return schema
+      ? Layer.effect(KV, KV.make(binding, schema))
+      : Layer.effect(KV, KV.make(binding));
+  }
 }
 
 // ── KVMap LayerMap for Multi-Instance ──────────────────────────────────

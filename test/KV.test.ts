@@ -32,6 +32,46 @@ it.effect("delete removes the key", () =>
   }).pipe(Effect.provide(KV.layer(memoryKV())))
 );
 
+// ── JSON values ─────────────────────────────────────────────────────────
+
+it.effect("put and get with objects (automatic JSON serialization)", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const data = { name: "Alice", age: 30 };
+    yield* kv.put("key", data);
+    const result = yield* kv.get("key");
+    expect(result).toEqual(data);
+  }).pipe(Effect.provide(KV.layer(memoryKV())))
+);
+
+it.effect("put and get with arrays", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const data = [1, 2, 3];
+    yield* kv.put("key", data);
+    const result = yield* kv.get("key");
+    expect(result).toEqual(data);
+  }).pipe(Effect.provide(KV.layer(memoryKV())))
+);
+
+it.effect("put and get with numbers", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    yield* kv.put("key", 42);
+    const result = yield* kv.get("key");
+    expect(result).toBe(42);
+  }).pipe(Effect.provide(KV.layer(memoryKV())))
+);
+
+it.effect("put and get with booleans", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    yield* kv.put("key", true);
+    const result = yield* kv.get("key");
+    expect(result).toBe(true);
+  }).pipe(Effect.provide(KV.layer(memoryKV())))
+);
+
 // ── List operations ─────────────────────────────────────────────────────
 
 it.effect("list returns all keys", () =>
@@ -241,7 +281,7 @@ it.effect("getOrFail fails on expired keys", () =>
   }).pipe(Effect.provide(KV.layer(memoryKV())))
 );
 
-// ── JSON mode with schema validation ────────────────────────────────────
+// ── Schema validation mode ──────────────────────────────────────────────
 
 const UserSchema = Schema.Struct({
   id: Schema.String,
@@ -250,57 +290,48 @@ const UserSchema = Schema.Struct({
 });
 type User = typeof UserSchema.Type;
 
-it.effect(
-  "JSON mode - put and get with schema validation",
-  () =>
-    Effect.gen(function* () {
-      const kv = (yield* KV) as any;
-      const user: User = {
-        id: "123",
-        name: "Alice",
-        email: "alice@example.com",
-      };
+it.effect("schema mode - put and get with schema validation", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const user: User = {
+      id: "123",
+      name: "Alice",
+      email: "alice@example.com",
+    };
 
-      yield* kv.put("user:123", user);
-      const result: User | null = yield* kv.get("user:123");
+    yield* kv.put("user:123", user);
+    const result = yield* kv.get("user:123");
 
-      expect(result).toEqual(user);
-    }).pipe(
-      Effect.provide(KV.json(UserSchema).layer(memoryKV()))
-    ) as Effect.Effect<void>
+    expect(result).toEqual(user);
+  }).pipe(Effect.provide(KV.layer(memoryKV(), UserSchema)))
 );
 
-it.effect("JSON mode - get returns null for missing keys", () =>
+it.effect("schema mode - get returns null for missing keys", () =>
   Effect.gen(function* () {
     const kv = yield* KV;
     const result = yield* kv.get("nonexistent");
     expect(result).toBe(null);
-  }).pipe(Effect.provide(KV.json(UserSchema).layer(memoryKV())))
+  }).pipe(Effect.provide(KV.layer(memoryKV(), UserSchema)))
+);
+
+it.effect("schema mode - getOrFail returns typed value", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const user: User = {
+      id: "456",
+      name: "Bob",
+      email: "bob@example.com",
+    };
+
+    yield* kv.put("user:456", user);
+    const result = yield* kv.getOrFail("user:456");
+
+    expect(result).toEqual(user);
+  }).pipe(Effect.provide(KV.layer(memoryKV(), UserSchema)))
 );
 
 it.effect(
-  "JSON mode - getOrFail returns typed value",
-  () =>
-    Effect.gen(function* () {
-      const kv = (yield* KV) as any;
-      const user: User = {
-        id: "456",
-        name: "Bob",
-        email: "bob@example.com",
-      };
-
-      yield* kv.put("user:456", user);
-      const result: User = yield* kv.getOrFail("user:456");
-
-      expect(result).toEqual(user);
-      expect(result.name).toBe("Bob");
-    }).pipe(
-      Effect.provide(KV.json(UserSchema).layer(memoryKV()))
-    ) as Effect.Effect<void>
-);
-
-it.effect(
-  "JSON mode - getOrFail fails with NotFoundError for missing keys",
+  "schema mode - getOrFail fails with NotFoundError for missing keys",
   () =>
     Effect.gen(function* () {
       const kv = yield* KV;
@@ -308,14 +339,14 @@ it.effect(
       const result = yield* kv.getOrFail("nonexistent").pipe(Effect.flip);
 
       expect(result._tag).toBe("NotFoundError");
-    }).pipe(Effect.provide(KV.json(UserSchema).layer(memoryKV())))
+    }).pipe(Effect.provide(KV.layer(memoryKV(), UserSchema)))
 );
 
 it.effect(
-  "JSON mode - getWithMetadata returns typed value with metadata",
+  "schema mode - getWithMetadata returns typed value with metadata",
   () =>
     Effect.gen(function* () {
-      const kv = (yield* KV) as any;
+      const kv = yield* KV;
       const user: User = {
         id: "789",
         name: "Charlie",
@@ -324,45 +355,38 @@ it.effect(
       const metadata = { version: 1, author: "admin" };
 
       yield* kv.put("user:789", user, { metadata });
-      const result: { value: User | null; metadata: typeof metadata | null } =
-        yield* kv.getWithMetadata("user:789");
+      const result = yield* kv.getWithMetadata("user:789");
 
       expect(result.value).toEqual(user);
       expect(result.metadata).toEqual(metadata);
-    }).pipe(
-      Effect.provide(KV.json(UserSchema).layer(memoryKV()))
-    ) as Effect.Effect<void>
+    }).pipe(Effect.provide(KV.layer(memoryKV(), UserSchema)))
 );
 
-it.effect(
-  "JSON mode - handles multiple users",
-  () =>
-    Effect.gen(function* () {
-      const kv = (yield* KV) as any;
-      const users: User[] = [
-        { id: "1", name: "Alice", email: "alice@example.com" },
-        { id: "2", name: "Bob", email: "bob@example.com" },
-        { id: "3", name: "Charlie", email: "charlie@example.com" },
-      ];
+it.effect("schema mode - handles multiple users", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const users: User[] = [
+      { id: "1", name: "Alice", email: "alice@example.com" },
+      { id: "2", name: "Bob", email: "bob@example.com" },
+      { id: "3", name: "Charlie", email: "charlie@example.com" },
+    ];
 
-      // Store all users
-      for (const user of users) {
-        yield* kv.put(`user:${user.id}`, user);
-      }
+    // Store all users
+    for (const user of users) {
+      yield* kv.put(`user:${user.id}`, user);
+    }
 
-      // Retrieve and verify
-      const alice: User = yield* kv.getOrFail("user:1");
-      const bob: User = yield* kv.getOrFail("user:2");
-      const charlie: User = yield* kv.getOrFail("user:3");
+    // Retrieve and verify
+    const alice = yield* kv.getOrFail("user:1");
+    const bob = yield* kv.getOrFail("user:2");
+    const charlie = yield* kv.getOrFail("user:3");
 
-      expect(alice.name).toBe("Alice");
-      expect(bob.name).toBe("Bob");
-      expect(charlie.name).toBe("Charlie");
+    expect(alice).toEqual(users[0]);
+    expect(bob).toEqual(users[1]);
+    expect(charlie).toEqual(users[2]);
 
-      // List all users
-      const list = yield* kv.list({ prefix: "user:" });
-      expect(list.keys.length).toBe(3);
-    }).pipe(
-      Effect.provide(KV.json(UserSchema).layer(memoryKV()))
-    ) as Effect.Effect<void>
+    // List all users
+    const list = yield* kv.list({ prefix: "user:" });
+    expect(list.keys.length).toBe(3);
+  }).pipe(Effect.provide(KV.layer(memoryKV(), UserSchema)))
 );
