@@ -456,6 +456,62 @@ export const memoryD1 = (): D1Binding => {
     return results;
   };
 
+  // Helper: execute INSERT with literal values (from exec)
+  const executeInsertLiteral = (sql: string): number => {
+    const parsed = parseSQL(sql);
+    if (!parsed.table) {
+      throw new Error("Cannot parse table name from INSERT statement");
+    }
+
+    const table = tables.get(parsed.table);
+    if (!table) {
+      throw new Error(`Table ${parsed.table} does not exist`);
+    }
+
+    // Extract column names: INSERT INTO table (col1, col2) VALUES (val1, val2)
+    const colsMatch = sql.match(/\(([^)]+)\)\s*VALUES/i);
+    if (!colsMatch?.[1]) {
+      throw new Error("Cannot parse INSERT statement columns");
+    }
+
+    const columns = colsMatch[1].split(",").map((c) => c.trim());
+
+    // Extract values: VALUES (val1, val2)
+    const valsMatch = sql.match(/VALUES\s*\(([^)]+)\)/i);
+    if (!valsMatch?.[1]) {
+      throw new Error("Cannot parse INSERT statement values");
+    }
+
+    const values = valsMatch[1].split(",").map((v) => {
+      const trimmed = v.trim();
+      // Parse string literals (quoted)
+      if (trimmed.startsWith("'") && trimmed.endsWith("'")) {
+        return trimmed.slice(1, -1);
+      }
+      // Parse numbers
+      if (/^-?\d+(\.\d+)?$/.test(trimmed)) {
+        return Number(trimmed);
+      }
+      // Parse NULL
+      if (trimmed.toUpperCase() === "NULL") {
+        return null;
+      }
+      // Otherwise return as string
+      return trimmed;
+    });
+
+    const row: Record<string, unknown> = {};
+    columns.forEach((col, idx) => {
+      const value = values[idx];
+      if (value !== undefined) {
+        row[col] = value;
+      }
+    });
+
+    table.push(row);
+    return table.length;
+  };
+
   const exec = (sql: string): Promise<D1ExecResult> => {
     // Split by semicolons for multiple statements
     const statements = sql
@@ -475,8 +531,8 @@ export const memoryD1 = (): D1Binding => {
         }
         count++;
       } else if (parsed.type === "INSERT") {
-        // Execute insert without params (assumes VALUES are literals, not placeholders)
-        // This is a simplification - real implementation would parse literals
+        // Execute insert with literal values
+        executeInsertLiteral(stmt);
         count++;
       } else {
         // For other statements, just count them
@@ -1180,7 +1236,10 @@ export const memoryCache = (): CacheBinding => {
     return Promise.resolve(cached ? cached.clone() : undefined);
   };
 
-  const put = (request: Request | string, response: Response): Promise<void> => {
+  const put = (
+    request: Request | string,
+    response: Response
+  ): Promise<void> => {
     const key = requestKey(request);
     // Clone the response to store a copy
     store.set(key, response.clone());

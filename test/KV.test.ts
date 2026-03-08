@@ -254,7 +254,6 @@ it.effect(
   "JSON mode - put and get with schema validation",
   () =>
     Effect.gen(function* () {
-      // biome-ignore lint/suspicious/noExplicitAny: KV.json() returns typed service but exposes KV<string> interface
       const kv = (yield* KV) as any;
       const user: User = {
         id: "123",
@@ -283,7 +282,6 @@ it.effect(
   "JSON mode - getOrFail returns typed value",
   () =>
     Effect.gen(function* () {
-      // biome-ignore lint/suspicious/noExplicitAny: KV.json() returns typed service but exposes KV<string> interface
       const kv = (yield* KV) as any;
       const user: User = {
         id: "456",
@@ -317,7 +315,6 @@ it.effect(
   "JSON mode - getWithMetadata returns typed value with metadata",
   () =>
     Effect.gen(function* () {
-      // biome-ignore lint/suspicious/noExplicitAny: KV.json() returns typed service but exposes KV<string> interface
       const kv = (yield* KV) as any;
       const user: User = {
         id: "789",
@@ -341,7 +338,6 @@ it.effect(
   "JSON mode - handles multiple users",
   () =>
     Effect.gen(function* () {
-      // biome-ignore lint/suspicious/noExplicitAny: KV.json() returns typed service but exposes KV<string> interface
       const kv = (yield* KV) as any;
       const users: User[] = [
         { id: "1", name: "Alice", email: "alice@example.com" },

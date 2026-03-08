@@ -146,7 +146,7 @@ export class D1Error extends Data.TaggedError("D1Error")<{
  */
 export class D1QueryError extends Data.TaggedError("D1QueryError")<{
   readonly sql: string;
-  readonly params?: readonly unknown[];
+  readonly params?: readonly unknown[] | undefined;
   readonly message: string;
   readonly cause?: unknown;
 }> {}
@@ -207,25 +207,25 @@ export class D1 extends ServiceMap.Service<
   {
     readonly query: <T = Record<string, unknown>>(
       sql: string,
-      ...params: readonly unknown[]
+      params?: readonly unknown[]
     ) => Effect.Effect<readonly T[], D1QueryError>;
     readonly querySchema: <A>(
       schema: Schema.Schema<A>,
       sql: string,
-      ...params: readonly unknown[]
+      params?: readonly unknown[]
     ) => Effect.Effect<readonly A[], D1QueryError | Errors.SchemaError>;
     readonly queryFirst: <T = Record<string, unknown>>(
       sql: string,
-      ...params: readonly unknown[]
+      params?: readonly unknown[]
     ) => Effect.Effect<T | null, D1QueryError>;
     readonly queryFirstOrFail: <T = Record<string, unknown>>(
       sql: string,
-      ...params: readonly unknown[]
+      params?: readonly unknown[]
     ) => Effect.Effect<T, D1QueryError | Errors.NotFoundError>;
     readonly queryFirstSchema: <A>(
       schema: Schema.Schema<A>,
       sql: string,
-      ...params: readonly unknown[]
+      params?: readonly unknown[]
     ) => Effect.Effect<A | null, D1QueryError | Errors.SchemaError>;
     readonly batch: (
       statements: readonly D1PreparedStatement[]
@@ -259,22 +259,27 @@ export class D1 extends ServiceMap.Service<
     Effect.gen(function* () {
       const query = Effect.fn("D1.query")(function* <
         T = Record<string, unknown>,
-      >(sql: string, ...params: readonly unknown[]) {
+      >(sql: string, params?: readonly unknown[]) {
         const result = yield* Effect.tryPromise({
           try: () =>
             binding
               .prepare(sql)
-              .bind(...params)
+              .bind(...(params ?? []))
               .all<T>(),
           catch: (cause) =>
-            new D1QueryError({ sql, params, message: String(cause), cause }),
+            new D1QueryError({
+              sql,
+              ...(params !== undefined ? { params } : {}),
+              message: String(cause),
+              cause,
+            }),
         });
 
         if (!result.success) {
           return yield* Effect.fail(
             new D1QueryError({
               sql,
-              params,
+              ...(params !== undefined ? { params } : {}),
               message: "Query execution failed",
               cause: result,
             })
@@ -286,15 +291,20 @@ export class D1 extends ServiceMap.Service<
 
       const queryFirst = Effect.fn("D1.queryFirst")(function* <
         T = Record<string, unknown>,
-      >(sql: string, ...params: readonly unknown[]) {
+      >(sql: string, params?: readonly unknown[]) {
         const result = yield* Effect.tryPromise({
           try: () =>
             binding
               .prepare(sql)
-              .bind(...params)
+              .bind(...(params ?? []))
               .first<T>(),
           catch: (cause) =>
-            new D1QueryError({ sql, params, message: String(cause), cause }),
+            new D1QueryError({
+              sql,
+              ...(params !== undefined ? { params } : {}),
+              message: String(cause),
+              cause,
+            }),
         });
 
         return result;
@@ -302,8 +312,8 @@ export class D1 extends ServiceMap.Service<
 
       const queryFirstOrFail = Effect.fn("D1.queryFirstOrFail")(function* <
         T = Record<string, unknown>,
-      >(sql: string, ...params: readonly unknown[]) {
-        const result = yield* queryFirst<T>(sql, ...params);
+      >(sql: string, params?: readonly unknown[]) {
+        const result = yield* queryFirst<T>(sql, params);
 
         if (result === null) {
           return yield* Effect.fail(
@@ -347,10 +357,10 @@ export class D1 extends ServiceMap.Service<
       const querySchema = Effect.fn("D1.querySchema")(function* <A>(
         schema: Schema.Schema<A>,
         sql: string,
-        ...params: readonly unknown[]
+        params?: readonly unknown[]
       ) {
         // Get raw results first
-        const rawResults = yield* query(sql, ...params);
+        const rawResults = yield* query(sql, params);
 
         // Decode each row with schema validation
         const validated = yield* Effect.forEach(rawResults, (row) =>
@@ -373,10 +383,10 @@ export class D1 extends ServiceMap.Service<
       const queryFirstSchema = Effect.fn("D1.queryFirstSchema")(function* <A>(
         schema: Schema.Schema<A>,
         sql: string,
-        ...params: readonly unknown[]
+        params?: readonly unknown[]
       ) {
         // Get first raw result
-        const rawResult = yield* queryFirst(sql, ...params);
+        const rawResult = yield* queryFirst(sql, params);
 
         // If null, return null
         if (rawResult === null) {
