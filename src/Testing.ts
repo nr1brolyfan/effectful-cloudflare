@@ -6,6 +6,11 @@ import type {
   D1PreparedStatement,
   D1Result,
 } from "./D1.js";
+import type {
+  DOListOptions,
+  DOSqlStorageCursor,
+  DOStorageBinding,
+} from "./DurableObject.js";
 import type { KVBinding } from "./KV.js";
 import type { QueueBinding } from "./Queue.js";
 import type {
@@ -1258,5 +1263,294 @@ export const memoryCache = (): CacheBinding => {
     match,
     put,
     delete: deleteEntry,
+  };
+};
+
+// ── memoryDOStorage ─────────────────────────────────────────────────────
+
+/**
+ * In-memory Durable Object storage implementation for testing.
+ *
+ * Implements the `DOStorageBinding` structural interface with:
+ * - In-memory Map storage for key-value pairs
+ * - Alarm support (scheduled time tracking)
+ * - Transaction support (atomic operations)
+ * - List operations with filtering
+ * - Optional SQL storage support
+ *
+ * **Note:** This is a simplified mock for testing. It does NOT implement:
+ * - Persistent storage across test runs
+ * - Actual alarm execution (only tracks scheduled time)
+ * - Full SQL parsing (only basic exec/execOne operations)
+ *
+ * @param options - Optional configuration
+ * @param options.enableSql - Enable SQL storage support (default: false)
+ * @returns DOStorageBinding compatible with EffectDurableObject and makeStorage()
+ *
+ * @example
+ * ```ts
+ * import { it } from "@effect/vitest"
+ * import { Effect } from "effect"
+ * import { makeStorage } from "./DurableObject.js"
+ * import { memoryDOStorage } from "./Testing.js"
+ *
+ * it.effect("stores and retrieves values in DO storage", () =>
+ *   Effect.gen(function*() {
+ *     const storage = makeStorage(memoryDOStorage())
+ *
+ *     yield* storage.put("key", "value")
+ *     const result = yield* storage.get<string>("key")
+ *     expect(result).toBe("value")
+ *
+ *     yield* storage.setAlarm(Date.now() + 60000)
+ *     const alarm = yield* storage.getAlarm()
+ *     expect(alarm).toBeGreaterThan(0)
+ *   })
+ * )
+ * ```
+ */
+export const memoryDOStorage = (options?: {
+  enableSql?: boolean;
+}): DOStorageBinding => {
+  const store = new Map<string, unknown>();
+  let alarmTime: number | null = null;
+
+  // SQL storage (optional)
+  const sqlStore = new Map<string, Record<string, unknown>[]>();
+  let sqlDatabaseSize = 0;
+
+  const get = <T = unknown>(
+    key: string | readonly string[]
+  ): Promise<T | undefined | Map<string, T>> => {
+    if (typeof key === "string") {
+      // Single key lookup
+      return Promise.resolve(store.get(key) as T | undefined);
+    }
+
+    // Multiple keys lookup - return Map
+    const result = new Map<string, T>();
+    for (const k of key) {
+      const value = store.get(k);
+      if (value !== undefined) {
+        result.set(k, value as T);
+      }
+    }
+    return Promise.resolve(result);
+  };
+
+  const put = <T = unknown>(
+    keyOrEntries: string | Record<string, T>,
+    value?: T
+  ): Promise<void> => {
+    if (typeof keyOrEntries === "string") {
+      // Single key-value put
+      if (value !== undefined) {
+        store.set(keyOrEntries, value);
+      }
+    } else {
+      // Multiple entries put
+      for (const [k, v] of Object.entries(keyOrEntries)) {
+        store.set(k, v);
+      }
+    }
+    return Promise.resolve();
+  };
+
+  const deleteKey = (
+    key: string | readonly string[]
+  ): Promise<boolean | number> => {
+    if (typeof key === "string") {
+      // Single key delete
+      return Promise.resolve(store.delete(key));
+    }
+
+    // Multiple keys delete - return count
+    let count = 0;
+    for (const k of key) {
+      if (store.delete(k)) {
+        count++;
+      }
+    }
+    return Promise.resolve(count);
+  };
+
+  const deleteAll = (): Promise<void> => {
+    store.clear();
+    return Promise.resolve();
+  };
+
+  const list = <T = unknown>(
+    options?: DOListOptions
+  ): Promise<Map<string, T>> => {
+    const prefix = options?.prefix;
+    const start = options?.start;
+    const end = options?.end;
+    const limit = options?.limit ?? Number.POSITIVE_INFINITY;
+    const reverse = options?.reverse ?? false;
+
+    // Filter keys
+    let keys = Array.from(store.keys());
+
+    if (prefix) {
+      keys = keys.filter((k) => k.startsWith(prefix));
+    }
+
+    if (start) {
+      keys = keys.filter((k) => k >= start);
+    }
+
+    if (end) {
+      keys = keys.filter((k) => k < end);
+    }
+
+    // Sort
+    keys.sort();
+    if (reverse) {
+      keys.reverse();
+    }
+
+    // Limit
+    keys = keys.slice(0, limit);
+
+    // Build result Map
+    const result = new Map<string, T>();
+    for (const key of keys) {
+      const value = store.get(key);
+      if (value !== undefined) {
+        result.set(key, value as T);
+      }
+    }
+
+    return Promise.resolve(result);
+  };
+
+  const getAlarm = (): Promise<number | null> => {
+    return Promise.resolve(alarmTime);
+  };
+
+  const setAlarm = (scheduledTime: number | Date): Promise<void> => {
+    alarmTime =
+      scheduledTime instanceof Date ? scheduledTime.getTime() : scheduledTime;
+    return Promise.resolve();
+  };
+
+  const deleteAlarm = (): Promise<void> => {
+    alarmTime = null;
+    return Promise.resolve();
+  };
+
+  const transaction = async <T>(
+    closure: (txn: DOStorageBinding) => T | Promise<T>
+  ): Promise<T> => {
+    // Simple transaction: create a snapshot, run closure, commit or rollback
+    const snapshot = new Map(store);
+
+    try {
+      // Create a transaction binding that operates on the current store
+      const txnBinding: DOStorageBinding = {
+        get,
+        put,
+        delete: deleteKey,
+        deleteAll,
+        list,
+        getAlarm,
+        setAlarm,
+        deleteAlarm,
+        transaction,
+        ...(options?.enableSql && sqlStorage ? { sql: sqlStorage } : {}),
+      };
+
+      const result = await closure(txnBinding);
+      // Commit: store is already modified
+      return result;
+    } catch (error) {
+      // Rollback: restore snapshot
+      store.clear();
+      for (const [k, v] of snapshot.entries()) {
+        store.set(k, v);
+      }
+      throw error;
+    }
+  };
+
+  // SQL storage implementation (simplified)
+  const createEmptyCursor = <
+    T extends Record<string, unknown>,
+  >(): DOSqlStorageCursor<T> => ({
+    toArray: (): T[] => [],
+  });
+
+  const handleCreateTable = (query: string): void => {
+    const match = query.match(
+      /CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(\w+)/i
+    );
+    if (match?.[1]) {
+      const tableName = match[1];
+      if (!sqlStore.has(tableName)) {
+        sqlStore.set(tableName, []);
+      }
+      sqlDatabaseSize += 100;
+    }
+  };
+
+  const handleSelect = <T extends Record<string, unknown>>(
+    query: string
+  ): DOSqlStorageCursor<T> => {
+    const fromMatch = query.match(/FROM\s+(\w+)/i);
+    if (fromMatch?.[1]) {
+      const tableName = fromMatch[1];
+      const table = sqlStore.get(tableName) ?? [];
+      return {
+        toArray: (): T[] => table as T[],
+      };
+    }
+    return createEmptyCursor<T>();
+  };
+
+  const handleInsert = (): void => {
+    sqlDatabaseSize += 50;
+  };
+
+  const sqlStorage = options?.enableSql
+    ? {
+        get databaseSize(): number {
+          return sqlDatabaseSize;
+        },
+        exec<T extends Record<string, unknown> = Record<string, unknown>>(
+          query: string,
+          ..._bindings: readonly unknown[]
+        ): DOSqlStorageCursor<T> {
+          const trimmed = query.trim().toUpperCase();
+
+          if (trimmed.startsWith("CREATE TABLE")) {
+            handleCreateTable(query);
+            return createEmptyCursor<T>();
+          }
+
+          if (trimmed.startsWith("SELECT")) {
+            return handleSelect<T>(query);
+          }
+
+          if (trimmed.startsWith("INSERT")) {
+            handleInsert();
+            return createEmptyCursor<T>();
+          }
+
+          return createEmptyCursor<T>();
+        },
+      }
+    : undefined;
+
+  return {
+    get,
+    put,
+    delete: deleteKey,
+    deleteAll,
+    list,
+    getAlarm,
+    setAlarm,
+    deleteAlarm,
+    transaction,
+    ...(sqlStorage ? { sql: sqlStorage } : {}),
   };
 };
