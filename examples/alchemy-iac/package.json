@@ -1,0 +1,26 @@
+{
+  "name": "effectful-cloudflare-alchemy-iac-example",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "alchemy dev",
+    "deploy": "alchemy deploy",
+    "deploy:staging": "STAGE=staging alchemy deploy --stage staging",
+    "deploy:production": "STAGE=production alchemy deploy --stage production",
+    "destroy": "alchemy destroy",
+    "destroy:staging": "STAGE=staging alchemy destroy --stage staging",
+    "destroy:production": "STAGE=production alchemy destroy --stage production",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "effect": "^4.0.0-beta",
+    "effectful-cloudflare": "workspace:*"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20260128.0",
+    "alchemy": "^1.0.0",
+    "dotenv": "^16.4.5",
+    "typescript": "^5.9.3"
+  }
+}
