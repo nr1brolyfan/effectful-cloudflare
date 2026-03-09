@@ -587,6 +587,59 @@ it.effect("migrate skips already applied migrations", () =>
   }).pipe(Effect.provide(D1.layer(memoryD1())))
 );
 
+// ── prepare() helper ────────────────────────────────────────────────────
+
+it.effect("prepare creates bound prepared statements for batch", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+
+    yield* db.exec(
+      "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)"
+    );
+
+    // Use the service-level prepare method (not binding.prepare)
+    yield* db.batch([
+      db.prepare(
+        "INSERT INTO users (id, name, email) VALUES (?, ?, ?)",
+        1,
+        "Alice",
+        "alice@example.com"
+      ),
+      db.prepare(
+        "INSERT INTO users (id, name, email) VALUES (?, ?, ?)",
+        2,
+        "Bob",
+        "bob@example.com"
+      ),
+    ]);
+
+    const users = yield* db.query<{ id: number; name: string }>(
+      "SELECT * FROM users"
+    );
+    expect(users).toHaveLength(2);
+    expect(users[0]?.name).toBe("Alice");
+    expect(users[1]?.name).toBe("Bob");
+  }).pipe(Effect.provide(D1.layer(memoryD1())))
+);
+
+it.effect("prepare without params returns unbound statement", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+
+    yield* db.exec("CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)");
+
+    // prepare without params — need to bind later
+    const stmt = db.prepare("INSERT INTO items (id, name) VALUES (?, ?)");
+    yield* db.batch([stmt.bind(1, "Widget")]);
+
+    const items = yield* db.query<{ id: number; name: string }>(
+      "SELECT * FROM items"
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]?.name).toBe("Widget");
+  }).pipe(Effect.provide(D1.layer(memoryD1())))
+);
+
 // ── exec whitespace normalization ───────────────────────────────────────
 
 it.effect("exec preserves string literals with multiple spaces", () =>

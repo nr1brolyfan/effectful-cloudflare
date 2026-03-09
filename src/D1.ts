@@ -290,9 +290,18 @@ const normalizeSQL = (sql: string): string => {
  *   const user = yield* db.queryFirstOrFail("SELECT * FROM users WHERE id = ?", [123])
  * })
  *
+ * // Batch with prepare
+ * const program2 = Effect.gen(function*() {
+ *   const db = yield* D1
+ *   yield* db.batch([
+ *     db.prepare("INSERT INTO users (name) VALUES (?)", "Alice"),
+ *     db.prepare("INSERT INTO users (name) VALUES (?)", "Bob"),
+ *   ])
+ * })
+ *
  * // Schema-validated queries
  * const UserSchema = Schema.Struct({ id: Schema.Number, name: Schema.String })
- * const program2 = Effect.gen(function*() {
+ * const program3 = Effect.gen(function*() {
  *   const db = yield* D1
  *   const users = yield* db.querySchema(UserSchema, "SELECT * FROM users")
  * })
@@ -323,6 +332,10 @@ export class D1 extends ServiceMap.Service<
       sql: string,
       params?: readonly unknown[]
     ) => Effect.Effect<A | null, D1QueryError | Errors.SchemaError>;
+    readonly prepare: (
+      sql: string,
+      ...params: readonly unknown[]
+    ) => D1PreparedStatement;
     readonly batch: (
       statements: readonly D1PreparedStatement[]
     ) => Effect.Effect<readonly D1Result[], D1Error>;
@@ -617,7 +630,26 @@ export class D1 extends ServiceMap.Service<
         }
       });
 
+      /**
+       * Create a prepared statement from an SQL string, optionally pre-binding parameters.
+       *
+       * This is a synchronous method that returns a D1PreparedStatement directly.
+       * Use it to build statements for `batch()` operations.
+       *
+       * @param sql - SQL string with `?` placeholders
+       * @param params - Values to bind to the placeholders
+       * @returns D1PreparedStatement ready for batch or direct use
+       */
+      const prepare = (
+        sql: string,
+        ...params: readonly unknown[]
+      ): D1PreparedStatement => {
+        const stmt = binding.prepare(sql);
+        return params.length > 0 ? stmt.bind(...params) : stmt;
+      };
+
       return D1.of({
+        prepare,
         query,
         querySchema,
         queryFirst,
