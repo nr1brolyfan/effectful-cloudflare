@@ -299,3 +299,129 @@ it.effect("CacheError is catchable with catchTag", () =>
     expect(result).toBe("Caught: match");
   })
 );
+
+it.effect("CacheError on put binding failure", () =>
+  Effect.gen(function* () {
+    const errorBinding = {
+      match: () => Promise.reject(new Error("Network error")),
+      put: () => Promise.reject(new Error("Network error")),
+      delete: () => Promise.reject(new Error("Network error")),
+    };
+    const errorCache = yield* Cache.make(errorBinding);
+
+    const result = yield* errorCache
+      .put("https://example.com/test", new Response("data"))
+      .pipe(Effect.flip);
+
+    expect(result._tag).toBe("CacheError");
+    if (result._tag === "CacheError") {
+      expect(result.operation).toBe("put");
+      expect(result.message).toContain("Failed to put");
+    }
+  })
+);
+
+it.effect("CacheError on delete binding failure", () =>
+  Effect.gen(function* () {
+    const errorBinding = {
+      match: () => Promise.reject(new Error("Network error")),
+      put: () => Promise.reject(new Error("Network error")),
+      delete: () => Promise.reject(new Error("Network error")),
+    };
+    const errorCache = yield* Cache.make(errorBinding);
+
+    const result = yield* errorCache
+      .delete("https://example.com/test")
+      .pipe(Effect.flip);
+
+    expect(result._tag).toBe("CacheError");
+    if (result._tag === "CacheError") {
+      expect(result.operation).toBe("delete");
+    }
+  })
+);
+
+it.effect("CacheError includes cause from binding", () =>
+  Effect.gen(function* () {
+    const errorBinding = {
+      match: () => Promise.reject(new Error("Specific error message")),
+      put: () => Promise.reject(new Error("Network error")),
+      delete: () => Promise.reject(new Error("Network error")),
+    };
+    const errorCache = yield* Cache.make(errorBinding);
+
+    const result = yield* errorCache
+      .match("https://example.com/test")
+      .pipe(Effect.flip);
+
+    if (result._tag === "CacheError") {
+      expect(result.cause).toBeInstanceOf(Error);
+      expect((result.cause as Error).message).toBe("Specific error message");
+    }
+  })
+);
+
+it.effect("matchOrFail with CacheError on binding failure", () =>
+  Effect.gen(function* () {
+    const errorBinding = {
+      match: () => Promise.reject(new Error("Network error")),
+      put: () => Promise.reject(new Error("Network error")),
+      delete: () => Promise.reject(new Error("Network error")),
+    };
+    const errorCache = yield* Cache.make(errorBinding);
+
+    const result = yield* errorCache
+      .matchOrFail("https://example.com/test")
+      .pipe(Effect.flip);
+
+    expect(result._tag).toBe("CacheError");
+  })
+);
+
+// ── Edge cases ──────────────────────────────────────────────────────────
+
+it.effect("put then delete then match returns null", () =>
+  Effect.gen(function* () {
+    const cache = yield* Cache;
+    yield* cache.put("https://example.com/test", new Response("data"));
+    yield* cache.delete("https://example.com/test");
+    const result = yield* cache.match("https://example.com/test");
+    expect(result).toBe(null);
+  }).pipe(Effect.provide(Cache.layer(memoryCache())))
+);
+
+it.effect("multiple puts for same URL - last wins", () =>
+  Effect.gen(function* () {
+    const cache = yield* Cache;
+    yield* cache.put("https://example.com/test", new Response("first"));
+    yield* cache.put("https://example.com/test", new Response("second"));
+
+    const cached = yield* cache.match("https://example.com/test");
+    expect(cached).not.toBe(null);
+    if (cached) {
+      const text = yield* Effect.promise(() => cached.text());
+      expect(text).toBe("second");
+    }
+  }).pipe(Effect.provide(Cache.layer(memoryCache())))
+);
+
+it.effect("match returns cloned response - body can be read", () =>
+  Effect.gen(function* () {
+    const cache = yield* Cache;
+    yield* cache.put("https://example.com/test", new Response("data"));
+
+    // Match twice to verify cloning
+    const cached1 = yield* cache.match("https://example.com/test");
+    const cached2 = yield* cache.match("https://example.com/test");
+
+    expect(cached1).not.toBe(null);
+    expect(cached2).not.toBe(null);
+
+    if (cached1 && cached2) {
+      const text1 = yield* Effect.promise(() => cached1.text());
+      const text2 = yield* Effect.promise(() => cached2.text());
+      expect(text1).toBe("data");
+      expect(text2).toBe("data");
+    }
+  }).pipe(Effect.provide(Cache.layer(memoryCache())))
+);

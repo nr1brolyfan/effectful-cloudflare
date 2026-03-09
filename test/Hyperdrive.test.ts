@@ -169,3 +169,125 @@ it.effect("wraps errors when binding throws on connectionInfo access", () =>
     expect(error.message).toContain("Failed to read connection info");
   })
 );
+
+it.effect(
+  "HyperdriveError can be caught with catchTag (connectionString)",
+  () =>
+    Effect.gen(function* () {
+      const failingBinding = {
+        get connectionString(): string {
+          throw new Error("Binding access failed");
+        },
+        host: "host",
+        port: 5432,
+        user: "user",
+        password: "pass",
+        database: "db",
+      };
+
+      const result = yield* Effect.gen(function* () {
+        const hyperdrive = yield* Hyperdrive;
+        return yield* hyperdrive.connectionString.pipe(
+          Effect.catchTag("HyperdriveError", (error) =>
+            Effect.succeed(`Caught: ${error.operation}`)
+          )
+        );
+      }).pipe(Effect.provide(Hyperdrive.layer(failingBinding)));
+
+      expect(result).toBe("Caught: connectionString");
+    })
+);
+
+it.effect("HyperdriveError can be caught with catchTag (connectionInfo)", () =>
+  Effect.gen(function* () {
+    const failingBinding = {
+      connectionString: "postgresql://user:pass@host:5432/db",
+      get host(): string {
+        throw new Error("Host access failed");
+      },
+      port: 5432,
+      user: "user",
+      password: "pass",
+      database: "db",
+    };
+
+    const result = yield* Effect.gen(function* () {
+      const hyperdrive = yield* Hyperdrive;
+      return yield* hyperdrive.connectionInfo.pipe(
+        Effect.catchTag("HyperdriveError", (error) =>
+          Effect.succeed(`Caught: ${error.operation}`)
+        )
+      );
+    }).pipe(Effect.provide(Hyperdrive.layer(failingBinding)));
+
+    expect(result).toBe("Caught: connectionInfo");
+  })
+);
+
+it.effect("HyperdriveError preserves cause from binding", () =>
+  Effect.gen(function* () {
+    const cause = new Error("Binding access failed");
+    const failingBinding = {
+      get connectionString(): string {
+        throw cause;
+      },
+      host: "host",
+      port: 5432,
+      user: "user",
+      password: "pass",
+      database: "db",
+    };
+
+    const error = yield* Effect.gen(function* () {
+      const hyperdrive = yield* Hyperdrive;
+      yield* hyperdrive.connectionString;
+    })
+      .pipe(Effect.provide(Hyperdrive.layer(failingBinding)))
+      .pipe(Effect.flip);
+
+    expect(error._tag).toBe("HyperdriveError");
+    if (error._tag === "HyperdriveError") {
+      expect(error.cause).toBe(cause);
+    }
+  })
+);
+
+// ── Edge cases ──────────────────────────────────────────────────────────
+
+it.effect("connectionInfo excludes credentials", () =>
+  Effect.gen(function* () {
+    const hyperdrive = yield* Hyperdrive;
+
+    const info = yield* hyperdrive.connectionInfo;
+
+    // Should have host, port, database
+    expect(info.host).toBeDefined();
+    expect(info.port).toBeDefined();
+    expect(info.database).toBeDefined();
+    // Should NOT have user or password
+    expect((info as any).user).toBeUndefined();
+    expect((info as any).password).toBeUndefined();
+  }).pipe(Effect.provide(Hyperdrive.layer(mockBinding)))
+);
+
+it.effect("works with empty password binding", () => {
+  const binding: HyperdriveBinding = {
+    connectionString: "postgresql://user:@host:5432/db",
+    host: "host",
+    port: 5432,
+    user: "user",
+    password: "",
+    database: "db",
+  };
+
+  return Effect.gen(function* () {
+    const hyperdrive = yield* Hyperdrive;
+
+    const connString = yield* hyperdrive.connectionString;
+    expect(connString).toBe("postgresql://user:@host:5432/db");
+
+    const info = yield* hyperdrive.connectionInfo;
+    expect(info.host).toBe("host");
+    expect(info.database).toBe("db");
+  }).pipe(Effect.provide(Hyperdrive.layer(binding)));
+});

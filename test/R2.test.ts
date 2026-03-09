@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { Effect } from "effect";
-import { R2 } from "../src/R2.js";
+import { R2, type R2Binding } from "../src/R2.js";
 import { memoryR2 } from "../src/Testing.js";
 
 // ── Basic get/put operations ────────────────────────────────────────────
@@ -336,5 +336,186 @@ it.effect("complex workflow - upload, list, retrieve, delete", () =>
     const afterDelete = yield* r2.list();
     expect(afterDelete.objects.length).toBe(1);
     expect(afterDelete.objects[0]?.key).toBe("images/photo.jpg");
+  }).pipe(Effect.provide(R2.layer(memoryR2())))
+);
+
+// ── Binding error handling ──────────────────────────────────────────────
+
+const createErrorR2Binding = (): R2Binding => ({
+  get: () => Promise.reject(new Error("R2 get failed")),
+  put: () => Promise.reject(new Error("R2 put failed")),
+  delete: () => Promise.reject(new Error("R2 delete failed")),
+  head: () => Promise.reject(new Error("R2 head failed")),
+  list: () => Promise.reject(new Error("R2 list failed")),
+  createMultipartUpload: () =>
+    Promise.reject(new Error("R2 multipart create failed")),
+  resumeMultipartUpload: () => {
+    throw new Error("R2 multipart resume failed");
+  },
+});
+
+it.effect("R2Error on get binding failure", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    const error = yield* r2.get("key").pipe(Effect.flip);
+    expect(error._tag).toBe("R2Error");
+    if (error._tag === "R2Error") {
+      expect(error.operation).toBe("get");
+      expect(error.key).toBe("key");
+      expect(error.message).toContain("Failed to get object");
+    }
+  }).pipe(Effect.provide(R2.layer(createErrorR2Binding())))
+);
+
+it.effect("R2Error on put binding failure", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    const error = yield* r2.put("key", "data").pipe(Effect.flip);
+    expect(error._tag).toBe("R2Error");
+    if (error._tag === "R2Error") {
+      expect(error.operation).toBe("put");
+      expect(error.key).toBe("key");
+    }
+  }).pipe(Effect.provide(R2.layer(createErrorR2Binding())))
+);
+
+it.effect("R2Error on delete binding failure", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    const error = yield* r2.delete("key").pipe(Effect.flip);
+    expect(error._tag).toBe("R2Error");
+    if (error._tag === "R2Error") {
+      expect(error.operation).toBe("delete");
+    }
+  }).pipe(Effect.provide(R2.layer(createErrorR2Binding())))
+);
+
+it.effect("R2Error on head binding failure", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    const error = yield* r2.head("key").pipe(Effect.flip);
+    expect(error._tag).toBe("R2Error");
+    if (error._tag === "R2Error") {
+      expect(error.operation).toBe("head");
+      expect(error.key).toBe("key");
+    }
+  }).pipe(Effect.provide(R2.layer(createErrorR2Binding())))
+);
+
+it.effect("R2Error on list binding failure", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    const error = yield* r2.list().pipe(Effect.flip);
+    expect(error._tag).toBe("R2Error");
+    if (error._tag === "R2Error") {
+      expect(error.operation).toBe("list");
+      expect(error.message).toContain("Failed to list objects");
+    }
+  }).pipe(Effect.provide(R2.layer(createErrorR2Binding())))
+);
+
+it.effect("R2MultipartError on createMultipartUpload binding failure", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    const error = yield* r2.createMultipartUpload("key").pipe(Effect.flip);
+    expect(error._tag).toBe("R2MultipartError");
+    if (error._tag === "R2MultipartError") {
+      expect(error.operation).toBe("create");
+      expect(error.key).toBe("key");
+    }
+  }).pipe(Effect.provide(R2.layer(createErrorR2Binding())))
+);
+
+it.effect("R2MultipartError on resumeMultipartUpload binding failure", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    const error = yield* r2
+      .resumeMultipartUpload("key", "upload-123")
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("R2MultipartError");
+    if (error._tag === "R2MultipartError") {
+      expect(error.operation).toBe("upload");
+      expect(error.uploadId).toBe("upload-123");
+      expect(error.key).toBe("key");
+    }
+  }).pipe(Effect.provide(R2.layer(createErrorR2Binding())))
+);
+
+it.effect("R2Error can be caught with catchTag", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    const result = yield* r2
+      .get("key")
+      .pipe(
+        Effect.catchTag("R2Error", (error) =>
+          Effect.succeed(`Caught: ${error.operation}`)
+        )
+      );
+    expect(result).toBe("Caught: get");
+  }).pipe(Effect.provide(R2.layer(createErrorR2Binding())))
+);
+
+it.effect("R2Error includes cause from binding", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    const error = yield* r2.get("key").pipe(Effect.flip);
+    if (error._tag === "R2Error") {
+      expect(error.cause).toBeInstanceOf(Error);
+      expect((error.cause as Error).message).toBe("R2 get failed");
+    }
+  }).pipe(Effect.provide(R2.layer(createErrorR2Binding())))
+);
+
+it.effect("getOrFail propagates R2Error from binding failure", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    const error = yield* r2.getOrFail("key").pipe(Effect.flip);
+    expect(error._tag).toBe("R2Error");
+  }).pipe(Effect.provide(R2.layer(createErrorR2Binding())))
+);
+
+// ── Edge cases ──────────────────────────────────────────────────────────
+
+it.effect("put with null body", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    const info = yield* r2.put("empty-file", null);
+    expect(info.key).toBe("empty-file");
+    expect(info.size).toBe(0);
+  }).pipe(Effect.provide(R2.layer(memoryR2())))
+);
+
+it.effect("list with empty bucket", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    const result = yield* r2.list();
+    expect(result.objects).toHaveLength(0);
+    expect(result.truncated).toBe(false);
+  }).pipe(Effect.provide(R2.layer(memoryR2())))
+);
+
+it.effect("put overwrites existing object", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    yield* r2.put("file.txt", "original");
+    yield* r2.put("file.txt", "updated");
+
+    const obj = yield* r2.getOrFail("file.txt");
+    const text = yield* Effect.promise(() => obj.text());
+    expect(text).toBe("updated");
+  }).pipe(Effect.provide(R2.layer(memoryR2())))
+);
+
+it.effect("delete non-existent key does not throw", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    yield* r2.delete("nonexistent");
+  }).pipe(Effect.provide(R2.layer(memoryR2())))
+);
+
+it.effect("delete with empty array does not throw", () =>
+  Effect.gen(function* () {
+    const r2 = yield* R2;
+    yield* r2.delete([]);
   }).pipe(Effect.provide(R2.layer(memoryR2())))
 );

@@ -307,3 +307,176 @@ it.effect("wraps binding errors in VectorizeError", () =>
     expect(error.operation).toBe("query");
   })
 );
+
+// ── Error handling for each operation ────────────────────────────────────
+
+it.effect("VectorizeError on insert binding failure", () => {
+  const binding: any = {
+    insert: () => Promise.reject(new Error("Insert failed")),
+    upsert: () => Promise.reject(new Error("Upsert failed")),
+    query: () => Promise.reject(new Error("Query failed")),
+    getByIds: () => Promise.reject(new Error("GetByIds failed")),
+    deleteByIds: () => Promise.reject(new Error("DeleteByIds failed")),
+    describe: () => Promise.reject(new Error("Describe failed")),
+  };
+
+  return Effect.gen(function* () {
+    const vectorize = yield* Vectorize;
+    const error = yield* vectorize
+      .insert([{ id: "doc_1", values: [0.1, 0.2, 0.3] }])
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("VectorizeError");
+    if (error._tag === "VectorizeError") {
+      expect(error.operation).toBe("insert");
+    }
+  }).pipe(Effect.provide(Vectorize.layer(binding)));
+});
+
+it.effect("VectorizeError on upsert binding failure", () => {
+  const binding: any = {
+    insert: () => Promise.reject(new Error("Insert failed")),
+    upsert: () => Promise.reject(new Error("Upsert failed")),
+    query: () => Promise.reject(new Error("Query failed")),
+    getByIds: () => Promise.reject(new Error("GetByIds failed")),
+    deleteByIds: () => Promise.reject(new Error("DeleteByIds failed")),
+    describe: () => Promise.reject(new Error("Describe failed")),
+  };
+
+  return Effect.gen(function* () {
+    const vectorize = yield* Vectorize;
+    const error = yield* vectorize
+      .upsert([{ id: "doc_1", values: [0.1, 0.2, 0.3] }])
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("VectorizeError");
+    if (error._tag === "VectorizeError") {
+      expect(error.operation).toBe("upsert");
+    }
+  }).pipe(Effect.provide(Vectorize.layer(binding)));
+});
+
+it.effect("VectorizeError on getByIds binding failure", () => {
+  const binding: any = {
+    insert: () => Promise.reject(new Error("Insert failed")),
+    upsert: () => Promise.reject(new Error("Upsert failed")),
+    query: () => Promise.reject(new Error("Query failed")),
+    getByIds: () => Promise.reject(new Error("GetByIds failed")),
+    deleteByIds: () => Promise.reject(new Error("DeleteByIds failed")),
+    describe: () => Promise.reject(new Error("Describe failed")),
+  };
+
+  return Effect.gen(function* () {
+    const vectorize = yield* Vectorize;
+    const error = yield* vectorize.getByIds(["doc_1"]).pipe(Effect.flip);
+    expect(error._tag).toBe("VectorizeError");
+    if (error._tag === "VectorizeError") {
+      expect(error.operation).toBe("getByIds");
+    }
+  }).pipe(Effect.provide(Vectorize.layer(binding)));
+});
+
+it.effect("VectorizeError on deleteByIds binding failure", () => {
+  const binding: any = {
+    insert: () => Promise.reject(new Error("Insert failed")),
+    upsert: () => Promise.reject(new Error("Upsert failed")),
+    query: () => Promise.reject(new Error("Query failed")),
+    getByIds: () => Promise.reject(new Error("GetByIds failed")),
+    deleteByIds: () => Promise.reject(new Error("DeleteByIds failed")),
+    describe: () => Promise.reject(new Error("Describe failed")),
+  };
+
+  return Effect.gen(function* () {
+    const vectorize = yield* Vectorize;
+    const error = yield* vectorize.deleteByIds(["doc_1"]).pipe(Effect.flip);
+    expect(error._tag).toBe("VectorizeError");
+    if (error._tag === "VectorizeError") {
+      expect(error.operation).toBe("deleteByIds");
+    }
+  }).pipe(Effect.provide(Vectorize.layer(binding)));
+});
+
+it.effect("VectorizeError on describe binding failure", () => {
+  const binding: any = {
+    insert: () => Promise.reject(new Error("Insert failed")),
+    upsert: () => Promise.reject(new Error("Upsert failed")),
+    query: () => Promise.reject(new Error("Query failed")),
+    getByIds: () => Promise.reject(new Error("GetByIds failed")),
+    deleteByIds: () => Promise.reject(new Error("DeleteByIds failed")),
+    describe: () => Promise.reject(new Error("Describe failed")),
+  };
+
+  return Effect.gen(function* () {
+    const vectorize = yield* Vectorize;
+    const error = yield* vectorize.describe().pipe(Effect.flip);
+    expect(error._tag).toBe("VectorizeError");
+    if (error._tag === "VectorizeError") {
+      expect(error.operation).toBe("describe");
+    }
+  }).pipe(Effect.provide(Vectorize.layer(binding)));
+});
+
+it.effect("VectorizeError can be caught with catchTag", () => {
+  const binding: any = {
+    insert: () => Promise.reject(new Error("Insert failed")),
+    upsert: () => Promise.reject(new Error("Upsert failed")),
+    query: () => Promise.reject(new Error("Query failed")),
+    getByIds: () => Promise.reject(new Error("GetByIds failed")),
+    deleteByIds: () => Promise.reject(new Error("DeleteByIds failed")),
+    describe: () => Promise.reject(new Error("Describe failed")),
+  };
+
+  return Effect.gen(function* () {
+    const vectorize = yield* Vectorize;
+    const result = yield* vectorize
+      .insert([{ id: "doc_1", values: [0.1, 0.2, 0.3] }])
+      .pipe(
+        Effect.catchTag("VectorizeError", (error) =>
+          Effect.succeed(`Caught: ${error.operation}`)
+        )
+      );
+    expect(result).toBe("Caught: insert");
+  }).pipe(Effect.provide(Vectorize.layer(binding)));
+});
+
+// ── Edge cases ──────────────────────────────────────────────────────────
+
+it.effect("query returns empty matches when no vectors", () =>
+  Effect.gen(function* () {
+    const vectorize = yield* Vectorize;
+    const result = yield* vectorize.query([0.1, 0.2, 0.3], { topK: 5 });
+    expect(result.matches).toHaveLength(0);
+    expect(result.count).toBe(0);
+  }).pipe(Effect.provide(Vectorize.layer(memoryVectorize())))
+);
+
+it.effect("getByIds returns empty for non-existent IDs", () =>
+  Effect.gen(function* () {
+    const vectorize = yield* Vectorize;
+    const result = yield* vectorize.getByIds(["non-existent"]);
+    expect(result).toHaveLength(0);
+  }).pipe(Effect.provide(Vectorize.layer(memoryVectorize())))
+);
+
+it.effect("deleteByIds with non-existent IDs returns zero count", () =>
+  Effect.gen(function* () {
+    const vectorize = yield* Vectorize;
+    const result = yield* vectorize.deleteByIds(["non-existent"]);
+    expect(result.mutationId).toBeDefined();
+  }).pipe(Effect.provide(Vectorize.layer(memoryVectorize())))
+);
+
+it.effect("insert then deleteByIds removes vectors", () =>
+  Effect.gen(function* () {
+    const vectorize = yield* Vectorize;
+
+    yield* vectorize.insert([
+      { id: "doc_1", values: [0.1, 0.2, 0.3] },
+      { id: "doc_2", values: [0.4, 0.5, 0.6] },
+    ]);
+
+    yield* vectorize.deleteByIds(["doc_1"]);
+
+    const remaining = yield* vectorize.getByIds(["doc_1", "doc_2"]);
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.id).toBe("doc_2");
+  }).pipe(Effect.provide(Vectorize.layer(memoryVectorize())))
+);

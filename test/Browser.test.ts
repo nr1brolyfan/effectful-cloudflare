@@ -305,6 +305,158 @@ it.effect("can catch BrowserError with catchTag", () =>
   })
 );
 
+// ── Error handling for each operation ────────────────────────────────────
+
+it.effect("BrowserError on navigate failure", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const instance = yield* browser.launch();
+    const page = yield* Effect.promise(() => instance.newPage());
+
+    // Override goto to reject
+    page.goto = () => Promise.reject(new Error("Navigation timeout"));
+
+    const error = yield* browser
+      .navigate(page, "https://example.com")
+      .pipe(Effect.flip);
+
+    expect(error._tag).toBe("BrowserError");
+    if (error._tag === "BrowserError") {
+      expect(error.operation).toBe("navigate");
+      expect(error.message).toContain("https://example.com");
+    }
+  }).pipe(Effect.provide(Browser.layer(memoryBrowser())))
+);
+
+it.effect("BrowserError on screenshot failure", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const instance = yield* browser.launch();
+    const page = yield* Effect.promise(() => instance.newPage());
+
+    // Override screenshot to reject
+    page.screenshot = () =>
+      Promise.reject(new Error("Screenshot capture failed"));
+
+    const error = yield* browser.screenshot(page).pipe(Effect.flip);
+
+    expect(error._tag).toBe("BrowserError");
+    if (error._tag === "BrowserError") {
+      expect(error.operation).toBe("screenshot");
+      expect(error.message).toBe("Failed to capture screenshot");
+    }
+  }).pipe(Effect.provide(Browser.layer(memoryBrowser())))
+);
+
+it.effect("BrowserError on pdf failure", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const instance = yield* browser.launch();
+    const page = yield* Effect.promise(() => instance.newPage());
+
+    // Override pdf to reject
+    page.pdf = () => Promise.reject(new Error("PDF generation failed"));
+
+    const error = yield* browser.pdf(page).pipe(Effect.flip);
+
+    expect(error._tag).toBe("BrowserError");
+    if (error._tag === "BrowserError") {
+      expect(error.operation).toBe("pdf");
+      expect(error.message).toBe("Failed to generate PDF");
+    }
+  }).pipe(Effect.provide(Browser.layer(memoryBrowser())))
+);
+
+it.effect("BrowserError on evaluate failure", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const instance = yield* browser.launch();
+    const page = yield* Effect.promise(() => instance.newPage());
+
+    // Override evaluate to reject
+    page.evaluate = () => Promise.reject(new Error("Script execution failed"));
+
+    const error = yield* browser
+      .evaluate(page, "nonexistent()")
+      .pipe(Effect.flip);
+
+    expect(error._tag).toBe("BrowserError");
+    if (error._tag === "BrowserError") {
+      expect(error.operation).toBe("evaluate");
+      expect(error.message).toBe("Failed to evaluate JavaScript");
+    }
+  }).pipe(Effect.provide(Browser.layer(memoryBrowser())))
+);
+
+it.effect("BrowserError preserves cause from binding", () =>
+  Effect.gen(function* () {
+    const cause = new Error("Original binding error");
+    const errorBinding = {
+      launch: () => Promise.reject(cause),
+    };
+
+    const browser = yield* Browser.make(errorBinding);
+    const error = yield* browser.launch().pipe(Effect.flip);
+
+    expect(error._tag).toBe("BrowserError");
+    if (error._tag === "BrowserError") {
+      expect(error.cause).toBe(cause);
+    }
+  })
+);
+
+it.effect("navigate error can be caught with catchTag", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const instance = yield* browser.launch();
+    const page = yield* Effect.promise(() => instance.newPage());
+
+    page.goto = () => Promise.reject(new Error("DNS resolution failed"));
+
+    const result = yield* browser
+      .navigate(page, "https://bad-domain.example")
+      .pipe(
+        Effect.catchTag("BrowserError", (error) =>
+          Effect.succeed(`Caught: ${error.operation}`)
+        )
+      );
+
+    expect(result).toBe("Caught: navigate");
+  }).pipe(Effect.provide(Browser.layer(memoryBrowser())))
+);
+
+// ── Edge cases ──────────────────────────────────────────────────────────
+
+it.effect("launch with no options succeeds", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const instance = yield* browser.launch();
+    expect(instance).toBeDefined();
+    expect(instance.close).toBeDefined();
+  }).pipe(Effect.provide(Browser.layer(memoryBrowser())))
+);
+
+it.effect("close browser session succeeds", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const instance = yield* browser.launch();
+    // Close should not throw
+    yield* Effect.promise(() => instance.close());
+  }).pipe(Effect.provide(Browser.layer(memoryBrowser())))
+);
+
+it.effect("navigate to URL not in config uses default content", () =>
+  Effect.gen(function* () {
+    const browser = yield* Browser;
+    const instance = yield* browser.launch();
+    const page = yield* Effect.promise(() => instance.newPage());
+
+    yield* browser.navigate(page, "https://unknown.example.com");
+    const content = yield* Effect.promise(() => page.content());
+    expect(content).toContain("https://unknown.example.com");
+  }).pipe(Effect.provide(Browser.layer(memoryBrowser())))
+);
+
 // ── Full workflow example ───────────────────────────────────────────────
 
 it.effect("complete browser automation workflow", () => {

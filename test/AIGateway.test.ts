@@ -505,5 +505,113 @@ describe("AIGateway", () => {
         );
       }).pipe(Effect.provide(AIGateway.layer(binding)));
     });
+
+    it.effect("AIGatewayRequestError preserves cause from binding", () => {
+      const cause = new Error("DNS resolution failed");
+      const binding: AIGatewayBinding = {
+        run: () => Promise.reject(cause),
+        getLog: () => Promise.reject(cause),
+        patchLog: () => Promise.reject(cause),
+        getUrl: () => Promise.reject(cause),
+      };
+
+      return Effect.gen(function* () {
+        const gateway = yield* AIGateway;
+
+        const error = yield* gateway
+          .run({
+            provider: "openai",
+            endpoint: "/v1/completions",
+            query: { prompt: "test" },
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("AIGatewayRequestError");
+        if (error._tag === "AIGatewayRequestError") {
+          expect(error.cause).toBe(cause);
+        }
+      }).pipe(Effect.provide(AIGateway.layer(binding)));
+    });
+
+    it.effect("runBatch wraps binding errors in AIGatewayRequestError", () => {
+      const binding: AIGatewayBinding = {
+        run: () => Promise.reject(new Error("Batch gateway error")),
+        getLog: () => Promise.resolve({} as any),
+        patchLog: () => Promise.resolve(),
+        getUrl: () => Promise.resolve(""),
+      };
+
+      return Effect.gen(function* () {
+        const gateway = yield* AIGateway;
+
+        const error = yield* gateway
+          .runBatch([
+            {
+              provider: "openai",
+              endpoint: "/v1/completions",
+              query: { prompt: "test" },
+            },
+          ])
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("AIGatewayRequestError");
+        if (error._tag === "AIGatewayRequestError") {
+          expect(error.operation).toBe("runBatch");
+        }
+      }).pipe(Effect.provide(AIGateway.layer(binding)));
+    });
+
+    it.effect("getUrl wraps binding errors in AIGatewayRequestError", () => {
+      const binding: AIGatewayBinding = {
+        run: () => Promise.resolve(new Response("OK")),
+        getLog: () => Promise.resolve({} as any),
+        patchLog: () => Promise.resolve(),
+        getUrl: () => Promise.reject(new Error("URL generation failed")),
+      };
+
+      return Effect.gen(function* () {
+        const gateway = yield* AIGateway;
+
+        const error = yield* gateway.getUrl().pipe(Effect.flip);
+
+        expect(error._tag).toBe("AIGatewayRequestError");
+        if (error._tag === "AIGatewayRequestError") {
+          expect(error.operation).toBe("getUrl");
+        }
+      }).pipe(Effect.provide(AIGateway.layer(binding)));
+    });
+
+    it.effect("handles 403 Forbidden response", () => {
+      const binding: AIGatewayBinding = {
+        run: () =>
+          Promise.resolve(
+            new Response(JSON.stringify({ error: "Forbidden" }), {
+              status: 403,
+              statusText: "Forbidden",
+            })
+          ),
+        getLog: () => Promise.resolve({} as any),
+        patchLog: () => Promise.resolve(),
+        getUrl: () => Promise.resolve(""),
+      };
+
+      return Effect.gen(function* () {
+        const gateway = yield* AIGateway;
+
+        const error = yield* gateway
+          .run({
+            provider: "openai",
+            endpoint: "/v1/completions",
+            query: { prompt: "test" },
+          })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("AIGatewayResponseError");
+        if (error._tag === "AIGatewayResponseError") {
+          expect(error.status).toBe(403);
+          expect(error.statusText).toBe("Forbidden");
+        }
+      }).pipe(Effect.provide(AIGateway.layer(binding)));
+    });
   });
 });

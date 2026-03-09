@@ -288,5 +288,70 @@ describe("AI", () => {
         );
       }).pipe(Effect.provide(AI.layer(binding)));
     });
+
+    it.effect("AIError preserves cause from binding", () => {
+      const cause = new Error("GPU unavailable");
+      const binding: AIBinding = {
+        run: () => Promise.reject(cause),
+      };
+
+      return Effect.gen(function* () {
+        const ai = yield* AI;
+
+        const error = yield* ai
+          .run("@cf/meta/llama-3-8b-instruct", { prompt: "test" })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("AIError");
+        if (error._tag === "AIError") {
+          expect(error.cause).toBe(cause);
+        }
+      }).pipe(Effect.provide(AI.layer(binding)));
+    });
+
+    it.effect("AIError includes model name in error", () => {
+      const binding: AIBinding = {
+        run: () => Promise.reject(new Error("Model not found")),
+      };
+
+      return Effect.gen(function* () {
+        const ai = yield* AI;
+
+        const error = yield* ai
+          .run("@cf/custom/nonexistent-model", { prompt: "test" })
+          .pipe(Effect.flip);
+
+        expect(error._tag).toBe("AIError");
+        if (error._tag === "AIError") {
+          expect(error.model).toBe("@cf/custom/nonexistent-model");
+        }
+      }).pipe(Effect.provide(AI.layer(binding)));
+    });
+
+    it.effect(
+      "runSchema error from binding produces AIError not SchemaError",
+      () => {
+        const ResponseSchema = Schema.Struct({
+          response: Schema.String,
+        });
+
+        const binding: AIBinding = {
+          run: () => Promise.reject(new Error("Binding failure")),
+        };
+
+        return Effect.gen(function* () {
+          const ai = yield* AI;
+
+          const error = yield* ai
+            .runSchema("@cf/meta/llama-3-8b-instruct", ResponseSchema, {
+              prompt: "test",
+            })
+            .pipe(Effect.flip);
+
+          // When binding itself fails, we get AIError not SchemaError
+          expect(error._tag).toBe("AIError");
+        }).pipe(Effect.provide(AI.layer(binding)));
+      }
+    );
   });
 });

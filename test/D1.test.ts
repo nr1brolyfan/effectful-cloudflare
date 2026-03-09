@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
-import { D1 } from "../src/D1.js";
+import { D1, type D1Binding, type D1PreparedStatement } from "../src/D1.js";
 import { memoryD1 } from "../src/Testing.js";
 
 // ── Basic query operations ──────────────────────────────────────────────
@@ -282,7 +282,191 @@ it.effect("querySchema validates and returns typed results", () =>
 
     expect(users).toHaveLength(2);
     expect(users[0]?.name).toBe("Alice");
-    expect(users[0]?.email).toBe("alice@example.com");
+    expect(users[1]?.name).toBe("Bob");
+  }).pipe(Effect.provide(D1.layer(memoryD1())))
+);
+
+// ── Binding error handling ──────────────────────────────────────────────
+
+const createFailingPreparedStmt = (): D1PreparedStatement => ({
+  bind: () => createFailingPreparedStmt(),
+  all: () => Promise.reject(new Error("D1 query failed")),
+  run: () => Promise.reject(new Error("D1 run failed")),
+  first: () => Promise.reject(new Error("D1 first failed")),
+});
+
+const createErrorD1Binding = (): D1Binding => ({
+  prepare: () => createFailingPreparedStmt(),
+  batch: () => Promise.reject(new Error("D1 batch failed")),
+  exec: () => Promise.reject(new Error("D1 exec failed")),
+  dump: () => Promise.reject(new Error("D1 dump failed")),
+});
+
+it.effect("D1QueryError on query binding failure", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+    const error = yield* db.query("SELECT * FROM users").pipe(Effect.flip);
+    expect(error._tag).toBe("D1QueryError");
+    if (error._tag === "D1QueryError") {
+      expect(error.sql).toBe("SELECT * FROM users");
+      expect(error.message).toContain("D1 query failed");
+    }
+  }).pipe(Effect.provide(D1.layer(createErrorD1Binding())))
+);
+
+it.effect("D1QueryError on queryFirst binding failure", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+    const error = yield* db
+      .queryFirst("SELECT * FROM users WHERE id = ?", [1])
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("D1QueryError");
+    if (error._tag === "D1QueryError") {
+      expect(error.sql).toBe("SELECT * FROM users WHERE id = ?");
+      expect(error.params).toEqual([1]);
+    }
+  }).pipe(Effect.provide(D1.layer(createErrorD1Binding())))
+);
+
+it.effect("D1QueryError on queryFirstOrFail binding failure", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+    const error = yield* db
+      .queryFirstOrFail("SELECT * FROM users WHERE id = ?", [1])
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("D1QueryError");
+  }).pipe(Effect.provide(D1.layer(createErrorD1Binding())))
+);
+
+it.effect("D1Error on exec binding failure", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+    const error = yield* db
+      .exec("CREATE TABLE users (id INTEGER)")
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("D1Error");
+    if (error._tag === "D1Error") {
+      expect(error.operation).toBe("exec");
+      expect(error.message).toContain("D1 exec failed");
+    }
+  }).pipe(Effect.provide(D1.layer(createErrorD1Binding())))
+);
+
+it.effect("D1Error on batch binding failure", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+    const error = yield* db.batch([]).pipe(Effect.flip);
+    expect(error._tag).toBe("D1Error");
+    if (error._tag === "D1Error") {
+      expect(error.operation).toBe("batch");
+    }
+  }).pipe(Effect.provide(D1.layer(createErrorD1Binding())))
+);
+
+it.effect("D1QueryError can be caught with catchTag", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+    const result = yield* db
+      .query("SELECT * FROM users")
+      .pipe(
+        Effect.catchTag("D1QueryError", (error) =>
+          Effect.succeed(`Caught: ${error.sql}`)
+        )
+      );
+    expect(result).toBe("Caught: SELECT * FROM users");
+  }).pipe(Effect.provide(D1.layer(createErrorD1Binding())))
+);
+
+it.effect("D1Error can be caught with catchTag", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+    const result = yield* db
+      .exec("DROP TABLE users")
+      .pipe(
+        Effect.catchTag("D1Error", (error) =>
+          Effect.succeed(`Caught: ${error.operation}`)
+        )
+      );
+    expect(result).toBe("Caught: exec");
+  }).pipe(Effect.provide(D1.layer(createErrorD1Binding())))
+);
+
+it.effect("D1QueryError includes cause from binding", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+    const error = yield* db.query("SELECT 1").pipe(Effect.flip);
+    if (error._tag === "D1QueryError") {
+      expect(error.cause).toBeInstanceOf(Error);
+      expect((error.cause as Error).message).toBe("D1 query failed");
+    }
+  }).pipe(Effect.provide(D1.layer(createErrorD1Binding())))
+);
+
+// ── Schema validation failures ──────────────────────────────────────────
+
+it.effect("querySchema fails with SchemaError on invalid data", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+
+    yield* db.exec(
+      "CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT, email TEXT)"
+    );
+    yield* db.exec(
+      "INSERT INTO users (id, name, email) VALUES (1, 'Alice', 'alice@example.com')"
+    );
+
+    // Use a schema that will fail - email expects a number
+    const BadSchema = Schema.Struct({
+      id: Schema.Number,
+      name: Schema.Number, // name is string, schema expects number
+      email: Schema.String,
+    });
+
+    const error = yield* db
+      .querySchema(BadSchema, "SELECT * FROM users")
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("SchemaError");
+  }).pipe(Effect.provide(D1.layer(memoryD1())))
+);
+
+it.effect("querySchema SchemaError can be caught with catchTag", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+
+    yield* db.exec("CREATE TABLE items (id INTEGER, name TEXT)");
+    yield* db.exec("INSERT INTO items (id, name) VALUES (1, 'Widget')");
+
+    const BadSchema = Schema.Struct({
+      id: Schema.String, // expects string, but id is number
+      name: Schema.String,
+    });
+
+    const result = yield* db
+      .querySchema(BadSchema, "SELECT * FROM items")
+      .pipe(
+        Effect.catchTag("SchemaError", (error) =>
+          Effect.succeed(`Schema error: ${error.message}`)
+        )
+      );
+    expect(result).toContain("Schema error:");
+  }).pipe(Effect.provide(D1.layer(memoryD1())))
+);
+
+// ── Edge cases ──────────────────────────────────────────────────────────
+
+it.effect("query with no params works", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+    yield* db.exec("CREATE TABLE items (id INTEGER)");
+    const items = yield* db.query("SELECT * FROM items");
+    expect(items).toEqual([]);
+  }).pipe(Effect.provide(D1.layer(memoryD1())))
+);
+
+it.effect("migrate with empty migrations array", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+    yield* db.migrate([]);
   }).pipe(Effect.provide(D1.layer(memoryD1())))
 );
 

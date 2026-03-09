@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
-import { QueueProducer } from "../src/Queue.js";
+import { type QueueBinding, QueueProducer } from "../src/Queue.js";
 import { memoryQueue } from "../src/Testing.js";
 
 // ── Basic send operations ───────────────────────────────────────────────
@@ -23,13 +23,13 @@ it.effect("send with options sets contentType and delaySeconds", () => {
     const queue = yield* QueueProducer;
 
     yield* queue.send("Delayed message", {
-      contentType: "text/plain",
+      contentType: "text",
       delaySeconds: 60,
     });
 
     expect(binding.messages).toHaveLength(1);
     expect(binding.messages[0]?.body).toBe("Delayed message");
-    expect(binding.messages[0]?.contentType).toBe("text/plain");
+    expect(binding.messages[0]?.contentType).toBe("text");
     expect(binding.messages[0]?.delaySeconds).toBe(60);
   }).pipe(Effect.provide(QueueProducer.layer(binding)));
 });
@@ -89,16 +89,16 @@ it.effect("sendBatch with options", () => {
     const queue = yield* QueueProducer;
 
     yield* queue.sendBatch([
-      { body: "Message 1", contentType: "text/plain" },
+      { body: "Message 1", contentType: "text" },
       { body: "Message 2", delaySeconds: 30 },
-      { body: "Message 3", contentType: "application/json", delaySeconds: 60 },
+      { body: "Message 3", contentType: "json", delaySeconds: 60 },
     ]);
 
     expect(binding.messages).toHaveLength(3);
-    expect(binding.messages[0]?.contentType).toBe("text/plain");
+    expect(binding.messages[0]?.contentType).toBe("text");
     expect(binding.messages[0]?.delaySeconds).toBeUndefined();
     expect(binding.messages[1]?.delaySeconds).toBe(30);
-    expect(binding.messages[2]?.contentType).toBe("application/json");
+    expect(binding.messages[2]?.contentType).toBe("json");
     expect(binding.messages[2]?.delaySeconds).toBe(60);
   }).pipe(Effect.provide(QueueProducer.layer(binding)));
 });
@@ -189,7 +189,7 @@ it.effect("JSON mode - send encodes and validates message", () => {
     yield* queue.send(task);
 
     expect(binding.messages).toHaveLength(1);
-    expect(binding.messages[0]?.contentType).toBe("application/json");
+    expect(binding.messages[0]?.contentType).toBe("json");
 
     // Parse the JSON message
     const body = binding.messages[0]?.body;
@@ -218,7 +218,7 @@ it.effect("JSON mode - send with custom options", () => {
     yield* queue.send(task, { delaySeconds: 30 });
 
     expect(binding.messages).toHaveLength(1);
-    expect(binding.messages[0]?.contentType).toBe("application/json");
+    expect(binding.messages[0]?.contentType).toBe("json");
     expect(binding.messages[0]?.delaySeconds).toBe(30);
   }).pipe(Effect.provide(QueueProducer.json(TaskSchema).layer(binding)));
 });
@@ -240,7 +240,7 @@ it.effect("JSON mode - sendBatch encodes multiple messages", () => {
 
     // Verify all messages are JSON encoded
     for (let i = 0; i < 3; i++) {
-      expect(binding.messages[i]?.contentType).toBe("application/json");
+      expect(binding.messages[i]?.contentType).toBe("json");
       const parsed = JSON.parse(binding.messages[i]?.body as string);
       expect(parsed.id).toBe(tasks[i]?.id);
       expect(parsed.type).toBe(tasks[i]?.type);
@@ -274,8 +274,8 @@ it.effect("JSON mode - sendBatch with options", () => {
     expect(binding.messages[1]?.delaySeconds).toBe(60);
 
     // Both should have JSON content type
-    expect(binding.messages[0]?.contentType).toBe("application/json");
-    expect(binding.messages[1]?.contentType).toBe("application/json");
+    expect(binding.messages[0]?.contentType).toBe("json");
+    expect(binding.messages[1]?.contentType).toBe("json");
   }).pipe(Effect.provide(QueueProducer.json(TaskSchema).layer(binding)));
 });
 
@@ -363,4 +363,92 @@ it.effect("queue operations with Effect.forEach", () => {
     expect(binding.messages).toHaveLength(3);
     expect(binding.messages.map((m) => m.body)).toEqual(items);
   }).pipe(Effect.provide(QueueProducer.layer(binding)));
+});
+
+// ── Binding error handling ──────────────────────────────────────────────
+
+const createErrorQueueBinding = (): QueueBinding => ({
+  send: () => Promise.reject(new Error("Queue send failed")),
+  sendBatch: () => Promise.reject(new Error("Queue sendBatch failed")),
+});
+
+it.effect("QueueSendError on send binding failure", () => {
+  const binding = createErrorQueueBinding();
+  return Effect.gen(function* () {
+    const queue = yield* QueueProducer;
+    const error = yield* queue.send("message").pipe(Effect.flip);
+    expect(error._tag).toBe("QueueSendError");
+    if (error._tag === "QueueSendError") {
+      expect(error.operation).toBe("send");
+      expect(error.messageCount).toBe(1);
+      expect(error.message).toContain("Failed to send message");
+    }
+  }).pipe(Effect.provide(QueueProducer.layer(binding)));
+});
+
+it.effect("QueueSendError on sendBatch binding failure", () => {
+  const binding = createErrorQueueBinding();
+  return Effect.gen(function* () {
+    const queue = yield* QueueProducer;
+    const error = yield* queue
+      .sendBatch([{ body: "msg1" }, { body: "msg2" }])
+      .pipe(Effect.flip);
+    expect(error._tag).toBe("QueueSendError");
+    if (error._tag === "QueueSendError") {
+      expect(error.operation).toBe("sendBatch");
+      expect(error.messageCount).toBe(2);
+      expect(error.message).toContain("batch of 2 messages");
+    }
+  }).pipe(Effect.provide(QueueProducer.layer(binding)));
+});
+
+it.effect("QueueSendError can be caught with catchTag", () => {
+  const binding = createErrorQueueBinding();
+  return Effect.gen(function* () {
+    const queue = yield* QueueProducer;
+    const result = yield* queue
+      .send("message")
+      .pipe(
+        Effect.catchTag("QueueSendError", (error) =>
+          Effect.succeed(`Caught: ${error.operation}`)
+        )
+      );
+    expect(result).toBe("Caught: send");
+  }).pipe(Effect.provide(QueueProducer.layer(binding)));
+});
+
+it.effect("QueueSendError includes cause from binding", () => {
+  const binding = createErrorQueueBinding();
+  return Effect.gen(function* () {
+    const queue = yield* QueueProducer;
+    const error = yield* queue.send("message").pipe(Effect.flip);
+    if (error._tag === "QueueSendError") {
+      expect(error.cause).toBeInstanceOf(Error);
+      expect((error.cause as Error).message).toBe("Queue send failed");
+    }
+  }).pipe(Effect.provide(QueueProducer.layer(binding)));
+});
+
+// ── JSON mode error handling ────────────────────────────────────────────
+
+it.effect("JSON mode - send fails on invalid message schema", () => {
+  const binding = memoryQueue();
+  return Effect.gen(function* () {
+    const queue = yield* QueueProducer;
+    // Send an invalid message that doesn't match TaskSchema
+    // The json layer casts at the type level, but runtime still validates
+    const result = yield* Effect.exit(queue.send({ invalid: true }));
+    expect(result._tag).toBe("Failure");
+  }).pipe(Effect.provide(QueueProducer.json(TaskSchema).layer(binding)));
+});
+
+it.effect("JSON mode - sendBatch fails on invalid batch message", () => {
+  const binding = memoryQueue();
+  return Effect.gen(function* () {
+    const queue = yield* QueueProducer;
+    const result = yield* Effect.exit(
+      queue.sendBatch([{ body: { not: "valid" } }])
+    );
+    expect(result._tag).toBe("Failure");
+  }).pipe(Effect.provide(QueueProducer.json(TaskSchema).layer(binding)));
 });

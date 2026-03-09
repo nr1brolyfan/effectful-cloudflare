@@ -1,6 +1,6 @@
 import { expect, it } from "@effect/vitest";
 import { Effect, Schema } from "effect";
-import { KV } from "../src/KV.js";
+import { KV, type KVBinding } from "../src/KV.js";
 import { memoryKV } from "../src/Testing.js";
 
 // ── Basic operations ────────────────────────────────────────────────────
@@ -389,4 +389,204 @@ it.effect("schema mode - handles multiple users", () =>
     const list = yield* kv.list({ prefix: "user:" });
     expect(list.keys.length).toBe(3);
   }).pipe(Effect.provide(KV.layer(memoryKV(), UserSchema)))
+);
+
+// ── Binding error handling ──────────────────────────────────────────────
+
+const createErrorBinding = (): KVBinding => ({
+  get: () => Promise.reject(new Error("KV get failed")),
+  getWithMetadata: () => Promise.reject(new Error("KV getWithMetadata failed")),
+  put: () => Promise.reject(new Error("KV put failed")),
+  delete: () => Promise.reject(new Error("KV delete failed")),
+  list: () => Promise.reject(new Error("KV list failed")),
+});
+
+it.effect("KVError on get binding failure", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const error = yield* kv.get("key").pipe(Effect.flip);
+    expect(error._tag).toBe("KVError");
+    if (error._tag === "KVError") {
+      expect(error.operation).toBe("get");
+      expect(error.key).toBe("key");
+      expect(error.message).toContain("Failed to get key");
+    }
+  }).pipe(Effect.provide(KV.layer(createErrorBinding())))
+);
+
+it.effect("KVError on put binding failure", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const error = yield* kv.put("key", "value").pipe(Effect.flip);
+    expect(error._tag).toBe("KVError");
+    if (error._tag === "KVError") {
+      expect(error.operation).toBe("put");
+      expect(error.key).toBe("key");
+    }
+  }).pipe(Effect.provide(KV.layer(createErrorBinding())))
+);
+
+it.effect("KVError on delete binding failure", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const error = yield* kv.delete("key").pipe(Effect.flip);
+    expect(error._tag).toBe("KVError");
+    if (error._tag === "KVError") {
+      expect(error.operation).toBe("delete");
+      expect(error.key).toBe("key");
+    }
+  }).pipe(Effect.provide(KV.layer(createErrorBinding())))
+);
+
+it.effect("KVError on list binding failure", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const error = yield* kv.list().pipe(Effect.flip);
+    expect(error._tag).toBe("KVError");
+    if (error._tag === "KVError") {
+      expect(error.operation).toBe("list");
+      expect(error.message).toContain("Failed to list keys");
+    }
+  }).pipe(Effect.provide(KV.layer(createErrorBinding())))
+);
+
+it.effect("KVError on getWithMetadata binding failure", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const error = yield* kv.getWithMetadata("key").pipe(Effect.flip);
+    expect(error._tag).toBe("KVError");
+    if (error._tag === "KVError") {
+      expect(error.operation).toBe("getWithMetadata");
+      expect(error.key).toBe("key");
+    }
+  }).pipe(Effect.provide(KV.layer(createErrorBinding())))
+);
+
+it.effect("KVError can be caught with catchTag", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const result = yield* kv
+      .get("key")
+      .pipe(
+        Effect.catchTag("KVError", (error) =>
+          Effect.succeed(`Caught KV error: ${error.operation}`)
+        )
+      );
+    expect(result).toBe("Caught KV error: get");
+  }).pipe(Effect.provide(KV.layer(createErrorBinding())))
+);
+
+it.effect("KVError includes cause from binding", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const error = yield* kv.get("key").pipe(Effect.flip);
+    if (error._tag === "KVError") {
+      expect(error.cause).toBeInstanceOf(Error);
+      expect((error.cause as Error).message).toBe("KV get failed");
+    }
+  }).pipe(Effect.provide(KV.layer(createErrorBinding())))
+);
+
+// ── Schema validation failures ──────────────────────────────────────────
+
+const StrictSchema = Schema.Struct({
+  id: Schema.Number,
+  name: Schema.String,
+});
+
+it.effect("schema mode - SchemaError on decode failure", () => {
+  const binding = memoryKV();
+  // Write invalid data directly to bypass schema encoding
+  binding.put("key", JSON.stringify({ id: "not-a-number", name: 123 }));
+
+  return Effect.gen(function* () {
+    const kv = yield* KV;
+    const error = yield* kv.get("key").pipe(Effect.flip);
+    expect(error._tag).toBe("SchemaError");
+    if (error._tag === "SchemaError") {
+      expect(error.message).toContain("Schema decoding failed");
+    }
+  }).pipe(Effect.provide(KV.layer(binding, StrictSchema)));
+});
+
+it.effect("schema mode - SchemaError can be caught with catchTag", () => {
+  const binding = memoryKV();
+  binding.put("key", JSON.stringify({ invalid: true }));
+
+  return Effect.gen(function* () {
+    const kv = yield* KV;
+    const result = yield* kv
+      .get("key")
+      .pipe(
+        Effect.catchTag("SchemaError", (error) =>
+          Effect.succeed(`Schema error: ${error.message}`)
+        )
+      );
+    expect(result).toContain("Schema error:");
+  }).pipe(Effect.provide(KV.layer(binding, StrictSchema)));
+});
+
+// ── Edge cases ──────────────────────────────────────────────────────────
+
+it.effect("put overwrites existing value", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    yield* kv.put("key", "first");
+    yield* kv.put("key", "second");
+    const result = yield* kv.get("key");
+    expect(result).toBe("second");
+  }).pipe(Effect.provide(KV.layer(memoryKV())))
+);
+
+it.effect("put and get with null value", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    yield* kv.put("key", null);
+    const result = yield* kv.get("key");
+    expect(result).toBe(null);
+  }).pipe(Effect.provide(KV.layer(memoryKV())))
+);
+
+it.effect("put and get with empty string", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    yield* kv.put("key", "");
+    const result = yield* kv.get("key");
+    expect(result).toBe("");
+  }).pipe(Effect.provide(KV.layer(memoryKV())))
+);
+
+it.effect("list with empty store returns empty keys", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const result = yield* kv.list();
+    expect(result.keys).toHaveLength(0);
+    expect(result.list_complete).toBe(true);
+  }).pipe(Effect.provide(KV.layer(memoryKV())))
+);
+
+it.effect("delete non-existent key does not throw", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    yield* kv.delete("nonexistent");
+  }).pipe(Effect.provide(KV.layer(memoryKV())))
+);
+
+it.effect("getWithMetadata returns null value for missing key", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const result = yield* kv.getWithMetadata("nonexistent");
+    expect(result.value).toBe(null);
+    expect(result.metadata).toBe(null);
+  }).pipe(Effect.provide(KV.layer(memoryKV())))
+);
+
+it.effect("put with nested objects preserves structure", () =>
+  Effect.gen(function* () {
+    const kv = yield* KV;
+    const data = { a: { b: { c: [1, 2, 3] } } };
+    yield* kv.put("key", data);
+    const result = yield* kv.get("key");
+    expect(result).toEqual(data);
+  }).pipe(Effect.provide(KV.layer(memoryKV())))
 );

@@ -321,6 +321,67 @@ it.effect("batch logging pattern", () => {
   }).pipe(Effect.provide(Pipeline.layer(binding)));
 });
 
+// ── Error cause verification ────────────────────────────────────────────
+
+it.effect("PipelineError preserves cause from binding", () =>
+  Effect.gen(function* () {
+    const cause = new Error("Network timeout");
+    const errorBinding = {
+      send: () => Promise.reject(cause),
+      events: [],
+    };
+
+    const pipeline = yield* Pipeline.make(errorBinding);
+    const error = yield* pipeline.send({ event: "test" }).pipe(Effect.flip);
+
+    expect(error._tag).toBe("PipelineError");
+    if (error._tag === "PipelineError") {
+      expect(error.cause).toBe(cause);
+    }
+  })
+);
+
+it.effect("sendBatch error preserves cause", () =>
+  Effect.gen(function* () {
+    const cause = new Error("Connection refused");
+    const errorBinding = {
+      send: () => Promise.reject(cause),
+      events: [],
+    };
+
+    const pipeline = yield* Pipeline.make(errorBinding);
+    const error = yield* pipeline
+      .sendBatch([{ event: "e1" }])
+      .pipe(Effect.flip);
+
+    expect(error._tag).toBe("PipelineError");
+    if (error._tag === "PipelineError") {
+      expect(error.operation).toBe("sendBatch");
+      expect(error.cause).toBe(cause);
+    }
+  })
+);
+
+it.effect("send error with array can be caught with catchTag", () =>
+  Effect.gen(function* () {
+    const errorBinding = {
+      send: () => Promise.reject(new Error("Send array failed")),
+      events: [],
+    };
+
+    const pipeline = yield* Pipeline.make(errorBinding);
+    const result = yield* pipeline
+      .send([{ event: "e1" }, { event: "e2" }])
+      .pipe(
+        Effect.catchTag("PipelineError", (error) =>
+          Effect.succeed(`Caught: ${error.operation}`)
+        )
+      );
+
+    expect(result).toBe("Caught: send");
+  })
+);
+
 // ── Empty batch handling ────────────────────────────────────────────────
 
 it.effect("handles empty batch", () => {
@@ -332,5 +393,50 @@ it.effect("handles empty batch", () => {
     yield* pipeline.sendBatch([]);
 
     expect(binding.events).toHaveLength(0);
+  }).pipe(Effect.provide(Pipeline.layer(binding)));
+});
+
+// ── Edge cases ──────────────────────────────────────────────────────────
+
+it.effect("send with empty object", () => {
+  const binding = memoryPipeline();
+
+  return Effect.gen(function* () {
+    const pipeline = yield* Pipeline;
+
+    yield* pipeline.send({});
+
+    expect(binding.events).toHaveLength(1);
+    expect(binding.events[0]).toEqual({});
+  }).pipe(Effect.provide(Pipeline.layer(binding)));
+});
+
+it.effect("sendBatch with single item", () => {
+  const binding = memoryPipeline();
+
+  return Effect.gen(function* () {
+    const pipeline = yield* Pipeline;
+
+    yield* pipeline.sendBatch([{ event: "single" }]);
+
+    expect(binding.events).toHaveLength(1);
+    expect(binding.events[0]).toEqual({ event: "single" });
+  }).pipe(Effect.provide(Pipeline.layer(binding)));
+});
+
+it.effect("send preserves order across multiple calls", () => {
+  const binding = memoryPipeline();
+
+  return Effect.gen(function* () {
+    const pipeline = yield* Pipeline;
+
+    yield* pipeline.send({ order: 1 });
+    yield* pipeline.send({ order: 2 });
+    yield* pipeline.send({ order: 3 });
+
+    expect(binding.events).toHaveLength(3);
+    expect((binding.events[0] as any).order).toBe(1);
+    expect((binding.events[1] as any).order).toBe(2);
+    expect((binding.events[2] as any).order).toBe(3);
   }).pipe(Effect.provide(Pipeline.layer(binding)));
 });
