@@ -8,7 +8,7 @@
  * - Type-safe bindings from alchemy.run.ts
  */
 
-import { Effect, Layer, Schema } from "effect";
+import { Effect, Layer, Logger, References, Schema } from "effect";
 import { D1 } from "effectful-cloudflare/D1";
 import { KV } from "effectful-cloudflare/KV";
 import { QueueProducer } from "effectful-cloudflare/Queue";
@@ -68,13 +68,16 @@ const indexRoute = () =>
  */
 const getCachedValue = (key: string) =>
   Effect.gen(function* () {
+    yield* Effect.logDebug("Getting cached value", { key });
     const kv = yield* KV;
     const cached = yield* kv.get(key);
 
     if (!cached) {
+      yield* Effect.logInfo("Cache miss", { key });
       return Response.json({ error: "Cache miss" }, { status: 404 });
     }
 
+    yield* Effect.logDebug("Cache hit", { key });
     return Response.json({ key, ...cached });
   });
 
@@ -84,6 +87,10 @@ const getCachedValue = (key: string) =>
  */
 const setCachedValue = (data: { key: string; value: string; ttl: number }) =>
   Effect.gen(function* () {
+    yield* Effect.logDebug("Storing value in cache", {
+      key: data.key,
+      ttl: data.ttl,
+    });
     const kv = yield* KV;
 
     const cacheValue: CacheValue = {
@@ -94,6 +101,11 @@ const setCachedValue = (data: { key: string; value: string; ttl: number }) =>
 
     yield* kv.put(data.key, cacheValue, {
       expirationTtl: data.ttl,
+    });
+
+    yield* Effect.logInfo("Cache value stored successfully", {
+      key: data.key,
+      expiresIn: data.ttl,
     });
 
     return Response.json({
@@ -138,6 +150,10 @@ const getAnalytics = () =>
  */
 const recordEvent = (data: { event: string; metadata?: unknown }) =>
   Effect.gen(function* () {
+    yield* Effect.logDebug("Recording analytics event", {
+      event: data.event,
+      hasMetadata: !!data.metadata,
+    });
     const db = yield* D1;
 
     // Ensure table exists
@@ -150,6 +166,8 @@ const recordEvent = (data: { event: string; metadata?: unknown }) =>
       "INSERT INTO analytics_events (event, metadata, timestamp) VALUES (?, ?, ?)",
       [data.event, JSON.stringify(data.metadata), new Date().toISOString()]
     );
+
+    yield* Effect.logInfo("Analytics event recorded", { event: data.event });
 
     return Response.json({ success: true, event: data.event });
   });
@@ -182,12 +200,21 @@ const listFiles = () =>
  */
 const uploadFile = (data: { key: string; content: string }) =>
   Effect.gen(function* () {
+    yield* Effect.logDebug("Uploading file to R2", {
+      key: data.key,
+      size: data.content.length,
+    });
     const r2 = yield* R2;
 
     yield* r2.put(data.key, data.content, {
       httpMetadata: {
         contentType: "text/plain",
       },
+    });
+
+    yield* Effect.logInfo("File uploaded successfully", {
+      key: data.key,
+      size: data.content.length,
     });
 
     return Response.json({
@@ -206,6 +233,7 @@ const queueTask = (data: {
   data: unknown;
 }) =>
   Effect.gen(function* () {
+    yield* Effect.logDebug("Queueing task", { type: data.type });
     const queue = yield* QueueProducer;
 
     const task: TaskMessage = {
@@ -216,6 +244,11 @@ const queueTask = (data: {
     };
 
     yield* queue.send(task);
+
+    yield* Effect.logInfo("Task queued successfully", {
+      taskId: task.id,
+      type: task.type,
+    });
 
     return Response.json({
       success: true,
@@ -232,6 +265,8 @@ const handler = (request: Request) =>
     const url = new URL(request.url);
     const path = url.pathname;
     const method = request.method;
+
+    yield* Effect.logDebug("Incoming request", { method, path });
 
     // GET /
     if (path === "/" && method === "GET") {
@@ -301,11 +336,29 @@ const handler = (request: Request) =>
 
 // ── Worker Export ──────────────────────────────────────────────────────────
 
+// ── Logger Configuration ───────────────────────────────────────────────────
+
+/**
+ * Pretty logger with colors for development
+ * Combines console JSON for structured logs and pretty console for human-readable output
+ */
+const loggerLayer = Logger.layer([
+  Logger.consolePretty({ colors: true }),
+  Logger.formatStructured,
+]);
+
+/**
+ * Set minimum log level to Debug to capture all logs
+ */
+const debugLogLevel = Layer.succeed(References.MinimumLogLevel, "Debug");
+
 export default serve(handler, (env: Env, _ctx) => {
   return Layer.mergeAll(
     KV.layer(env.CACHE_KV, CacheValue),
     D1.layer(env.ANALYTICS_DB),
     R2.layer(env.CONTENT_STORAGE),
-    QueueProducer.json(TaskMessage).layer(env.TASKS_QUEUE)
+    QueueProducer.json(TaskMessage).layer(env.TASKS_QUEUE),
+    loggerLayer,
+    debugLogLevel
   );
 });
