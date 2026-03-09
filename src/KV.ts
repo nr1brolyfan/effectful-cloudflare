@@ -32,54 +32,15 @@ import { WorkerEnv } from "./Worker.js";
 // ── Binding type ───────────────────────────────────────────────────────
 
 /**
- * Minimal structural type for KVNamespace binding.
- *
- * This structural type allows testing with mocks and doesn't require
- * `@cloudflare/workers-types` at runtime. It extracts only the methods
- * we need from the native KVNamespace interface.
+ * Re-export of Cloudflare's `KVNamespace` from `@cloudflare/workers-types`.
  *
  * @example
  * ```ts
- * // Use with native Cloudflare binding
  * const binding: KVBinding = env.MY_KV
- *
- * // Or use with test mock
  * const binding: KVBinding = Testing.memoryKV()
  * ```
  */
-export interface KVBinding {
-  delete(key: string): Promise<void>;
-  get(
-    key: string,
-    options?: { type?: string; cacheTtl?: number }
-  ): Promise<string | null>;
-  getWithMetadata<M = unknown>(
-    key: string,
-    options?: { type?: string; cacheTtl?: number }
-  ): Promise<{ value: string | null; metadata: M | null }>;
-  list(options?: {
-    prefix?: string;
-    limit?: number;
-    cursor?: string;
-  }): Promise<{
-    keys: ReadonlyArray<{
-      name: string;
-      expiration?: number;
-      metadata?: unknown;
-    }>;
-    list_complete: boolean;
-    cursor?: string;
-  }>;
-  put(
-    key: string,
-    value: string,
-    options?: {
-      expiration?: number;
-      expirationTtl?: number;
-      metadata?: unknown;
-    }
-  ): Promise<void>;
-}
+export type KVBinding = KVNamespace;
 
 // ── Errors ──────────────────────────────────────────────────────────────
 
@@ -107,40 +68,16 @@ export class KVError extends Data.TaggedError("KVError")<{
 
 // ── Options types ──────────────────────────────────────────────────────
 
-/**
- * Options for KV get operations.
- *
- * @property cacheTtl - How long (in seconds) the value should be cached in edge locations
- */
+/** Options for KV get operations. */
 export interface KVGetOptions {
   readonly cacheTtl?: number;
 }
 
-/**
- * Options for KV put operations.
- *
- * @property expiration - Absolute Unix timestamp (in seconds) when the key should expire
- * @property expirationTtl - Relative time (in seconds) from now when the key should expire
- * @property metadata - Arbitrary metadata to associate with the key-value pair
- */
-export interface KVPutOptions {
-  readonly expiration?: number;
-  readonly expirationTtl?: number;
-  readonly metadata?: unknown;
-}
+/** Re-export of Cloudflare's `KVNamespacePutOptions`. */
+export type KVPutOptions = KVNamespacePutOptions;
 
-/**
- * Options for KV list operations.
- *
- * @property prefix - Only return keys that begin with this prefix
- * @property limit - Maximum number of keys to return (default: 1000, max: 1000)
- * @property cursor - Pagination cursor from a previous list operation
- */
-export interface KVListOptions {
-  readonly cursor?: string;
-  readonly limit?: number;
-  readonly prefix?: string;
-}
+/** Re-export of Cloudflare's `KVNamespaceListOptions`. */
+export type KVListOptions = KVNamespaceListOptions;
 
 // ── Result types ───────────────────────────────────────────────────────
 

@@ -25,32 +25,18 @@ import { Data, Effect, Layer, ServiceMap } from "effect";
 // ── Binding type ───────────────────────────────────────────────────────
 
 /**
- * Minimal structural type for Hyperdrive binding.
+ * Structural type for the Cloudflare Hyperdrive binding.
  *
- * This structural type allows testing with mocks and doesn't require
- * `@cloudflare/workers-types` at runtime. It extracts only the properties
- * we need from the native Hyperdrive interface.
- *
- * Hyperdrive provides connection pooling and query caching for PostgreSQL databases.
- * All properties are readonly and synchronously accessible.
+ * Matches Cloudflare's `Hyperdrive` interface from `@cloudflare/workers-types`.
+ * Note: We cannot alias it directly because our service class is also named `Hyperdrive`.
  *
  * @example
  * ```ts
- * // Use with native Cloudflare binding
  * const binding: HyperdriveBinding = env.MY_HYPERDRIVE
- *
- * // Or use with test mock
- * const binding: HyperdriveBinding = {
- *   connectionString: "postgresql://user:pass@host:5432/db",
- *   host: "host",
- *   port: 5432,
- *   user: "user",
- *   password: "pass",
- *   database: "db"
- * }
  * ```
  */
 export interface HyperdriveBinding {
+  connect(): Socket;
   readonly connectionString: string;
   readonly database: string;
   readonly host: string;

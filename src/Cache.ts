@@ -29,41 +29,34 @@ import * as Errors from "./Errors.js";
 // ── Binding type ───────────────────────────────────────────────────────
 
 /**
- * Minimal structural type for Cloudflare Cache API binding.
+ * Structural type for the Cloudflare Cache API binding.
  *
- * This structural type allows testing with mocks and doesn't require
- * `@cloudflare/workers-types` at runtime. It extracts only the methods
- * we need from the native Cache interface.
+ * Matches Cloudflare's `Cache` abstract class from `@cloudflare/workers-types`.
+ * Uses `RequestInfo | URL` to match CF's method signatures exactly.
+ *
+ * Note: We cannot use `export type CacheBinding = Cache` because our module
+ * also exports a `Cache` class (the Effect service), causing a name collision.
  *
  * @example
  * ```ts
- * // Use with Cloudflare's default cache
  * const binding: CacheBinding = caches.default
- *
- * // Or use with named cache
  * const binding: CacheBinding = await caches.open("my-cache")
- *
- * // Or use with test mock
  * const binding: CacheBinding = Testing.memoryCache()
  * ```
  */
 export interface CacheBinding {
   delete(
-    request: Request | string,
+    request: RequestInfo | URL,
     options?: CacheQueryOptions
   ): Promise<boolean>;
   match(
-    request: Request | string,
+    request: RequestInfo | URL,
     options?: CacheQueryOptions
   ): Promise<Response | undefined>;
-  put(request: Request | string, response: Response): Promise<void>;
+  put(request: RequestInfo | URL, response: Response): Promise<void>;
 }
 
-/**
- * Options for Cache query operations.
- *
- * @property ignoreMethod - If true, ignore the request method when matching (default: false)
- */
+/** Options for Cache query operations. Matches Cloudflare's `CacheQueryOptions`. */
 export interface CacheQueryOptions {
   readonly ignoreMethod?: boolean;
 }

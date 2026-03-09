@@ -200,56 +200,24 @@ export interface R2MultipartUpload {
 /**
  * Metadata for a single uploaded part of a multipart upload.
  *
- * Returned by `R2MultipartUpload.uploadPart()` and required when calling
- * `R2MultipartUpload.complete()` to assemble the final object.
+ * Re-export of Cloudflare's `R2UploadedPart`.
  */
-export interface R2UploadedPart {
-  /** Entity tag identifying this part's content. */
-  etag: string;
-  /** 1-based part number matching the `uploadPart()` call. */
-  partNumber: number;
-}
+export type R2UploadedPart = globalThis.R2UploadedPart;
 
 /**
  * Standard HTTP metadata stored alongside an R2 object.
  *
- * These values map directly to HTTP response headers when the object is served.
- * Set them via the `httpMetadata` option on `put()` or `createMultipartUpload()`.
+ * Re-export of Cloudflare's `R2HTTPMetadata`.
  */
-export interface R2HTTPMetadata {
-  /** `Cache-Control` header value. */
-  cacheControl?: string;
-  /** Absolute cache expiry date (overrides `cacheControl` max-age). */
-  cacheExpiry?: Date;
-  /** `Content-Disposition` header (e.g. `attachment; filename="file.txt"`). */
-  contentDisposition?: string;
-  /** `Content-Encoding` header (e.g. `gzip`). */
-  contentEncoding?: string;
-  /** `Content-Language` header (e.g. `en-US`). */
-  contentLanguage?: string;
-  /** `Content-Type` MIME type (e.g. `application/json`). */
-  contentType?: string;
-}
+export type R2HTTPMetadata = globalThis.R2HTTPMetadata;
 
 /**
  * Content integrity checksums stored with an R2 object.
  *
- * Checksums are computed at upload time when provided via `R2PutOptions`
- * (as hex strings or `ArrayBuffer`). They are returned as raw `ArrayBuffer`
- * values on read.
+ * Re-export of Cloudflare's `R2Checksums`.
+ * CF's type includes an additional `toJSON(): R2StringChecksums` method.
  */
-export interface R2Checksums {
-  /** MD5 digest of the object body. */
-  md5?: ArrayBuffer;
-  /** SHA-1 digest of the object body. */
-  sha1?: ArrayBuffer;
-  /** SHA-256 digest of the object body. */
-  sha256?: ArrayBuffer;
-  /** SHA-384 digest of the object body. */
-  sha384?: ArrayBuffer;
-  /** SHA-512 digest of the object body. */
-  sha512?: ArrayBuffer;
-}
+export type R2Checksums = globalThis.R2Checksums;
 
 /**
  * Byte range specification for partial object reads.

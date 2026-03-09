@@ -142,36 +142,76 @@ export interface DOStorageBinding {
   /**
    * Run a transaction on storage.
    * All operations in the transaction are atomic.
+   *
+   * The transaction parameter is typed as a subset of `DOStorageBinding`
+   * matching Cloudflare's `DurableObjectTransaction` (which does not have
+   * `deleteAll` or nested `transaction` methods).
    */
   transaction<T>(
-    closure: (txn: DOStorageBinding) => T | Promise<T>
+    closure: (txn: DOTransactionBinding) => T | Promise<T>
   ): Promise<T>;
+}
+
+/**
+ * Subset of `DOStorageBinding` available inside a transaction.
+ *
+ * Matches Cloudflare's `DurableObjectTransaction` which provides most storage
+ * methods but does NOT include `deleteAll` or nested `transaction`. This ensures
+ * that `state.storage` (CF's `DurableObjectStorage`) is directly assignable to
+ * `DOStorageBinding` without type casts.
+ */
+export interface DOTransactionBinding {
+  /** Delete a key from storage. */
+  delete(key: string | readonly string[]): Promise<boolean | number>;
+  /** Delete the current alarm. */
+  deleteAlarm(): Promise<void>;
+  /** Get a value from storage. */
+  get<T = unknown>(
+    key: string | readonly string[]
+  ): Promise<T | undefined | Map<string, T>>;
+  /** Get the current alarm time. */
+  getAlarm(): Promise<number | null>;
+  /** List keys in storage with optional filtering. */
+  list<T = unknown>(options?: DOListOptions): Promise<Map<string, T>>;
+  /** Put a value into storage. */
+  put<T = unknown>(
+    keyOrEntries: string | Record<string, T>,
+    value?: T
+  ): Promise<void>;
+  /** Rollback the transaction. */
+  rollback?(): void;
+  /** Set an alarm to trigger at a specific time. */
+  setAlarm(scheduledTime: number | Date): Promise<void>;
 }
 
 /**
  * Options for listing keys in Durable Object storage.
  *
- * @property start - Start listing from this key (inclusive)
- * @property end - Stop listing at this key (exclusive)
- * @property prefix - Only list keys with this prefix
- * @property reverse - List in reverse order
- * @property limit - Maximum number of keys to return
+ * Re-export of Cloudflare's `DurableObjectListOptions`.
  */
-export interface DOListOptions {
-  readonly end?: string;
-  readonly limit?: number;
-  readonly prefix?: string;
-  readonly reverse?: boolean;
-  readonly start?: string;
-}
+export type DOListOptions = DurableObjectListOptions;
+
+/**
+ * SQL storage value types.
+ *
+ * Re-export of Cloudflare's `SqlStorageValue`.
+ */
+export type DOSqlStorageValue = SqlStorageValue;
 
 /**
  * Minimal structural type for SQL storage cursor.
  *
  * Represents the result of a SQL query execution. The cursor provides
  * synchronous iteration over query results.
+ *
+ * The generic constraint matches Cloudflare's `SqlStorageCursor<T extends Record<string, SqlStorageValue>>`.
  */
-export interface DOSqlStorageCursor<T = Record<string, unknown>> {
+export interface DOSqlStorageCursor<
+  T extends Record<string, DOSqlStorageValue> = Record<
+    string,
+    DOSqlStorageValue
+  >,
+> {
   /**
    * Convert cursor to array of results.
    * This is a synchronous operation.
@@ -202,10 +242,12 @@ export interface DOSqlStorageBinding {
    * Execute a SQL query and return a cursor.
    * The cursor must be converted to an array using toArray().
    */
-  exec<T extends Record<string, unknown> = Record<string, unknown>>(
-    query: string,
-    ...bindings: readonly unknown[]
-  ): DOSqlStorageCursor<T>;
+  exec<
+    T extends Record<string, DOSqlStorageValue> = Record<
+      string,
+      DOSqlStorageValue
+    >,
+  >(query: string, ...bindings: readonly unknown[]): DOSqlStorageCursor<T>;
 }
 
 // ── Target types ────────────────────────────────────────────────────────
@@ -891,7 +933,9 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
     return yield* Effect.tryPromise({
       try: () =>
         storage.transaction(async (txn) => {
-          const txnStorage = makeStorage(txn as unknown as DOStorageBinding);
+          // DOTransactionBinding is a subset of DOStorageBinding; missing methods
+          // (deleteAll, transaction) will throw at runtime if called inside txn.
+          const txnStorage = makeStorage(txn as DOStorageBinding);
           return await Effect.runPromise(fn(txnStorage));
         }),
       catch: (cause) =>

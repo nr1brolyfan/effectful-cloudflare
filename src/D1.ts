@@ -64,72 +64,30 @@ export interface Migration {
 // ── Binding types ──────────────────────────────────────────────────────
 
 /**
- * D1 prepared statement interface.
- *
- * Represents a prepared SQL statement that can be bound with parameters
- * and executed against a D1 database.
+ * Re-export of Cloudflare's `D1PreparedStatement` from `@cloudflare/workers-types`.
  */
-export interface D1PreparedStatement {
-  readonly all: <T = unknown>() => Promise<D1Result<T>>;
-  readonly bind: (...values: readonly unknown[]) => D1PreparedStatement;
-  readonly first: <T = unknown>(colName?: string) => Promise<T | null>;
-  readonly run: () => Promise<D1Result>;
-}
+export type D1PreparedStatement = globalThis.D1PreparedStatement;
 
 /**
- * Result from a D1 query operation.
- *
- * @property results - Array of row objects returned by the query
- * @property success - Whether the query executed successfully
- * @property meta - Query execution metadata (duration, changes, etc.)
+ * Re-export of Cloudflare's `D1Result<T>` from `@cloudflare/workers-types`.
  */
-export interface D1Result<T = unknown> {
-  readonly meta: {
-    readonly duration: number;
-    readonly changes: number;
-    readonly last_row_id: number;
-    readonly rows_read: number;
-    readonly rows_written: number;
-  };
-  readonly results: readonly T[];
-  readonly success: boolean;
-}
+export type D1Result<T = unknown> = globalThis.D1Result<T>;
 
 /**
- * Result from D1 exec operation.
- *
- * @property count - Number of statements executed
- * @property duration - Total execution time in milliseconds
+ * Re-export of Cloudflare's `D1ExecResult` from `@cloudflare/workers-types`.
  */
-export interface D1ExecResult {
-  readonly count: number;
-  readonly duration: number;
-}
+export type D1ExecResult = globalThis.D1ExecResult;
 
 /**
- * Minimal structural type for D1Database binding.
- *
- * This structural type allows testing with mocks and doesn't require
- * `@cloudflare/workers-types` at runtime. It extracts only the methods
- * we need from the native D1Database interface.
+ * Re-export of Cloudflare's `D1Database` from `@cloudflare/workers-types`.
  *
  * @example
  * ```ts
- * // Use with native Cloudflare binding
  * const binding: D1Binding = env.MY_DB
- *
- * // Or use with test mock
  * const binding: D1Binding = Testing.memoryD1()
  * ```
  */
-export interface D1Binding {
-  batch<T = unknown>(
-    statements: readonly D1PreparedStatement[]
-  ): Promise<readonly D1Result<T>[]>;
-  dump(): Promise<ArrayBuffer>;
-  exec(sql: string): Promise<D1ExecResult>;
-  prepare(sql: string): D1PreparedStatement;
-}
+export type D1Binding = D1Database;
 
 // ── Errors ──────────────────────────────────────────────────────────────
 
@@ -452,7 +410,7 @@ export class D1 extends ServiceMap.Service<
           Effect.annotateLogs({ statementCount: statements.length })
         );
         return yield* Effect.tryPromise({
-          try: () => binding.batch(statements),
+          try: () => binding.batch([...statements]),
           catch: (cause) =>
             new D1Error({
               operation: "batch",

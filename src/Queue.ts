@@ -30,37 +30,20 @@ import { WorkerEnv } from "./Worker.js";
 // ── Binding type ───────────────────────────────────────────────────────
 
 /**
- * Minimal structural type for Cloudflare Queue binding.
- *
- * This structural type allows testing with mocks and doesn't require
- * `@cloudflare/workers-types` at runtime. It extracts only the methods
- * we need from the native Queue interface.
+ * Re-export of Cloudflare's `QueueContentType` from `@cloudflare/workers-types`.
+ */
+export type QueueContentType = globalThis.QueueContentType;
+
+/**
+ * Re-export of Cloudflare's `Queue<T>` from `@cloudflare/workers-types`.
  *
  * @example
  * ```ts
- * // Use with native Cloudflare binding
  * const binding: QueueBinding = env.MY_QUEUE
- *
- * // Or use with test mock
  * const binding: QueueBinding = Testing.memoryQueue()
  * ```
  */
-/** Content type for queue messages. Matches Cloudflare's `QueueContentType`. */
-export type QueueContentType = "bytes" | "json" | "text" | "v8";
-
-export interface QueueBinding<T = unknown> {
-  send(
-    message: T,
-    options?: { contentType?: QueueContentType; delaySeconds?: number }
-  ): Promise<void>;
-  sendBatch(
-    messages: Iterable<{
-      body: T;
-      contentType?: QueueContentType;
-      delaySeconds?: number;
-    }>
-  ): Promise<void>;
-}
+export type QueueBinding<T = unknown> = Queue<T>;
 
 // ── Errors ──────────────────────────────────────────────────────────────
 
@@ -109,61 +92,11 @@ export class QueueConsumerError extends Data.TaggedError("QueueConsumerError")<{
 
 // ── Options & Result types ──────────────────────────────────────────────
 
-/**
- * Options for sending a single message to the queue.
- *
- * @example
- * ```ts
- * const options: QueueSendOptions = {
- *   contentType: "application/json",
- *   delaySeconds: 60
- * }
- * ```
- */
-export interface QueueSendOptions {
-  /**
-   * Content type of the message. Determines how the message body is serialized.
-   * @default "json"
-   */
-  readonly contentType?: QueueContentType;
+/** Re-export of Cloudflare's `QueueSendOptions`. */
+export type QueueSendOptions = globalThis.QueueSendOptions;
 
-  /**
-   * Delay in seconds before the message becomes visible.
-   * Maximum value is 43200 (12 hours).
-   */
-  readonly delaySeconds?: number;
-}
-
-/**
- * Single message in a batch send operation.
- *
- * @example
- * ```ts
- * const message: QueueBatchMessage<string> = {
- *   body: "Hello, Queue!",
- *   contentType: "text/plain",
- *   delaySeconds: 30
- * }
- * ```
- */
-export interface QueueBatchMessage<T> {
-  /**
-   * Message body.
-   */
-  readonly body: T;
-
-  /**
-   * Content type of the message. Determines how the message body is serialized.
-   * @default "json"
-   */
-  readonly contentType?: QueueContentType;
-
-  /**
-   * Delay in seconds before the message becomes visible.
-   * Maximum value is 43200 (12 hours).
-   */
-  readonly delaySeconds?: number;
-}
+/** Re-export of Cloudflare's `MessageSendRequest<T>`. */
+export type QueueBatchMessage<T> = MessageSendRequest<T>;
 
 // ── QueueProducer service ───────────────────────────────────────────────
 

@@ -31,50 +31,28 @@ import * as Errors from "./Errors.js";
 // ── Binding type ───────────────────────────────────────────────────────
 
 /**
- * Minimal structural type for Workers AI binding.
+ * Structural type for the Workers AI binding.
  *
- * This structural type allows testing with mocks and doesn't require
- * `@cloudflare/workers-types` at runtime. It extracts only the methods
- * we need from the native Ai interface.
- *
- * Workers AI provides a single `run()` method that executes inference
- * on Cloudflare's AI models (LLMs, embeddings, image classification, etc.).
+ * A minimal subset of Cloudflare's `Ai` abstract class that only requires the
+ * `run()` method. The full `Ai` class (which has additional methods like
+ * `gateway()`, `models()`, `toMarkdown()`) is assignable to this interface.
  *
  * @example
  * ```ts
- * // Use with native Cloudflare binding
  * const binding: AIBinding = env.AI
- *
- * // Or use with test mock
  * const binding: AIBinding = Testing.memoryAI()
  * ```
  */
 export interface AIBinding {
-  /**
-   * Run inference on a Workers AI model.
-   *
-   * @param model - Model name (e.g., "@cf/meta/llama-3-8b-instruct")
-   * @param inputs - Model-specific input data (varies by model type)
-   * @param options - Optional configuration (stream, etc.)
-   * @returns Promise resolving to model-specific output
-   */
-  run<T = unknown>(
+  run(
     model: string,
     inputs: Record<string, unknown>,
     options?: AIRunOptions
-  ): Promise<T>;
+  ): Promise<unknown>;
 }
 
-/**
- * Options for Workers AI run operation.
- */
-export interface AIRunOptions {
-  /**
-   * Enable streaming response (for text generation models).
-   * When true, returns a ReadableStream instead of the full response.
-   */
-  readonly stream?: boolean;
-}
+/** Re-export of Cloudflare's `AiOptions` from `@cloudflare/workers-types`. */
+export type AIRunOptions = AiOptions;
 
 // ── Errors ──────────────────────────────────────────────────────────────
 
@@ -154,11 +132,11 @@ type PureSchema<A> = Schema.Schema<A> & {
 export class AI extends ServiceMap.Service<
   AI,
   {
-    readonly run: <T = unknown>(
+    readonly run: (
       model: string,
       inputs: Record<string, unknown>,
       options?: AIRunOptions
-    ) => Effect.Effect<T, AIError>;
+    ) => Effect.Effect<unknown, AIError>;
     readonly runSchema: <A>(
       model: string,
       schema: PureSchema<A>,
@@ -179,14 +157,14 @@ export class AI extends ServiceMap.Service<
    * ```
    */
   static make = Effect.fn("AI.make")(function* (binding: AIBinding) {
-    const run = Effect.fn("AI.run")(function* <T = unknown>(
+    const run = Effect.fn("AI.run")(function* (
       model: string,
       inputs: Record<string, unknown>,
       options?: AIRunOptions
     ) {
       yield* Effect.logDebug("AI.run").pipe(Effect.annotateLogs({ model }));
       return yield* Effect.tryPromise({
-        try: () => binding.run<T>(model, inputs, options),
+        try: () => binding.run(model, inputs, options),
         catch: (cause) =>
           new AIError({
             model,
@@ -207,7 +185,7 @@ export class AI extends ServiceMap.Service<
         Effect.annotateLogs({ model })
       );
       // First run the model to get raw response
-      const rawResponse = yield* run<unknown>(model, inputs, options);
+      const rawResponse = yield* run(model, inputs, options);
 
       // Then decode the response using the schema
       return yield* Schema.decodeUnknownEffect(responseSchema)(

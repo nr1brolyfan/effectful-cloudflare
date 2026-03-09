@@ -34,179 +34,25 @@ import { Data, Effect, Layer, ServiceMap } from "effect";
 
 // ── Binding types ──────────────────────────────────────────────────────
 
+/** Re-export of Cloudflare's `AIGatewayUniversalRequest`. */
+export type AIGatewayRequest = AIGatewayUniversalRequest;
+
+/** Re-export of Cloudflare's `AiGatewayLog`. */
+export type AIGatewayLog = AiGatewayLog;
+
+/** Re-export of Cloudflare's `AiGatewayPatchLog`. */
+export type AIGatewayPatchLog = globalThis.AiGatewayPatchLog;
+
 /**
- * Request type for AI Gateway universal API.
- *
- * Represents a request to be sent through AI Gateway to a specific provider.
- * The gateway handles routing, logging, caching, and rate limiting.
+ * Re-export of Cloudflare's `AiGateway` abstract class from `@cloudflare/workers-types`.
  *
  * @example
  * ```ts
- * const request: AIGatewayRequest = {
- *   provider: "openai",
- *   endpoint: "/v1/chat/completions",
- *   headers: { "Content-Type": "application/json" },
- *   query: {
- *     model: "gpt-4",
- *     messages: [{ role: "user", content: "Hello!" }]
- *   }
- * }
- * ```
- */
-export interface AIGatewayRequest {
-  /**
-   * API endpoint path (e.g., "/v1/chat/completions")
-   */
-  readonly endpoint: string;
-  /**
-   * Optional HTTP headers to include in the request
-   */
-  readonly headers?: Record<string, string>;
-  /**
-   * AI provider to route the request to.
-   * Supported: "openai", "anthropic", "workers-ai", "bedrock", "google-ai-studio", etc.
-   */
-  readonly provider: string;
-  /**
-   * Request body/query data (provider-specific format)
-   */
-  readonly query: unknown;
-}
-
-/**
- * AI Gateway log entry.
- *
- * Contains metadata about a request that was proxied through AI Gateway,
- * including request/response data, usage metrics, and cost information.
- */
-export interface AIGatewayLog {
-  /**
-   * Whether the response was served from cache
-   */
-  readonly cached?: boolean;
-  /**
-   * Estimated cost in USD
-   */
-  readonly cost?: number;
-  /**
-   * ISO 8601 timestamp when the request was created
-   */
-  readonly created_at: string;
-  /**
-   * Unique log ID returned in `cf-aig-log-id` response header
-   */
-  readonly id: string;
-  /**
-   * Custom metadata attached to the log
-   */
-  readonly metadata?: Record<string, unknown>;
-  /**
-   * Model name (e.g., "gpt-4", "claude-3-opus")
-   */
-  readonly model: string;
-  /**
-   * Provider name (e.g., "openai", "anthropic")
-   */
-  readonly provider: string;
-  /**
-   * Request data sent to the provider
-   */
-  readonly request: {
-    readonly messages: readonly {
-      readonly role: string;
-      readonly content: string;
-    }[];
-    readonly max_tokens?: number;
-    readonly temperature?: number;
-    readonly top_p?: number;
-    readonly stream?: boolean;
-    readonly tools?: readonly unknown[];
-    readonly [key: string]: unknown;
-  };
-  /**
-   * Response data received from the provider (if request succeeded)
-   */
-  readonly response?: {
-    readonly message?: {
-      readonly role: string;
-      readonly content: string;
-    };
-    readonly usage?: {
-      readonly prompt_tokens: number;
-      readonly completion_tokens: number;
-      readonly total_tokens: number;
-    };
-    readonly [key: string]: unknown;
-  };
-  /**
-   * HTTP status code from provider response
-   */
-  readonly status_code?: number;
-  /**
-   * Total tokens used (prompt + completion)
-   */
-  readonly tokens?: number;
-}
-
-/**
- * Minimal structural type for Cloudflare AI Gateway binding.
- *
- * This structural type allows testing with mocks and doesn't require
- * `@cloudflare/workers-types` at runtime. It extracts only the methods
- * we need from the native AiGateway interface.
- *
- * AI Gateway is a unified proxy for multiple AI providers (OpenAI, Anthropic,
- * Workers AI, etc.) with built-in logging, caching, rate limiting, and cost tracking.
- *
- * @example
- * ```ts
- * // Use with native Cloudflare binding
  * const binding: AIGatewayBinding = env.AI_GATEWAY
- *
- * // Or use with test mock
  * const binding: AIGatewayBinding = Testing.memoryAIGateway()
  * ```
  */
-export interface AIGatewayBinding {
-  /**
-   * Retrieve a log entry by its ID.
-   *
-   * Log IDs are returned in the `cf-aig-log-id` response header from `run()`.
-   *
-   * @param logId - The log ID to retrieve
-   * @returns Promise resolving to the log entry
-   */
-  getLog(logId: string): Promise<AIGatewayLog>;
-  /**
-   * Get the AI Gateway URL for a specific provider.
-   *
-   * @param provider - Optional provider name
-   * @returns Promise resolving to the gateway URL
-   */
-  getUrl(provider?: string): Promise<string>;
-  /**
-   * Update a log entry with custom metadata or feedback score.
-   *
-   * @param logId - The log ID to update
-   * @param options - Metadata or score to attach
-   * @returns Promise resolving when the update completes
-   */
-  patchLog(
-    logId: string,
-    options: { metadata?: Record<string, unknown>; score?: number }
-  ): Promise<void>;
-  /**
-   * Send a request or batch of requests through AI Gateway.
-   *
-   * Supports both single requests and batched requests.
-   *
-   * @param requestOrRequests - Single request or array of requests to send
-   * @returns Promise resolving to the provider's HTTP response
-   */
-  run(
-    requestOrRequests: AIGatewayRequest | readonly AIGatewayRequest[]
-  ): Promise<Response>;
-}
+export type AIGatewayBinding = AiGateway;
 
 // ── Errors ──────────────────────────────────────────────────────────────
 
@@ -331,7 +177,7 @@ export class AIGateway extends ServiceMap.Service<
     ) => Effect.Effect<AIGatewayLog, AIGatewayRequestError>;
     readonly patchLog: (
       logId: string,
-      options: { metadata?: Record<string, unknown>; score?: number }
+      options: AIGatewayPatchLog
     ) => Effect.Effect<void, AIGatewayRequestError>;
     readonly getUrl: (
       provider?: string
@@ -393,7 +239,7 @@ export class AIGateway extends ServiceMap.Service<
         Effect.annotateLogs({ requestCount: requests.length })
       );
       const response = yield* Effect.tryPromise({
-        try: () => binding.run(requests),
+        try: () => binding.run([...requests]),
         catch: (cause) =>
           new AIGatewayRequestError({
             operation: "runBatch",
@@ -439,7 +285,7 @@ export class AIGateway extends ServiceMap.Service<
 
     const patchLog = Effect.fn("AIGateway.patchLog")(function* (
       logId: string,
-      options: { metadata?: Record<string, unknown>; score?: number }
+      options: AIGatewayPatchLog
     ) {
       yield* Effect.logDebug("AIGateway.patchLog").pipe(
         Effect.annotateLogs({ logId })

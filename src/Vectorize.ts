@@ -29,9 +29,10 @@ import { Data, Effect, Layer, ServiceMap } from "effect";
 /**
  * Minimal structural type for Vectorize Index binding.
  *
- * This structural type allows testing with mocks and doesn't require
- * `@cloudflare/workers-types` at runtime. It extracts only the methods
- * we need from the native VectorizeIndex interface.
+ * Accepts both Cloudflare's legacy `VectorizeIndex` (beta) and the newer
+ * `Vectorize` class. The mutation return type is a union that covers both
+ * `VectorizeVectorMutation` (`{ ids, count }`) and `VectorizeAsyncMutation`
+ * (`{ mutationId }`).
  *
  * @example
  * ```ts
@@ -58,17 +59,71 @@ export interface VectorizeBinding {
 
 /**
  * Float32Array or Float64Array for vector values.
+ *
+ * Re-export of Cloudflare's `VectorFloatArray`.
  */
-export type VectorFloatArray = Float32Array | Float64Array;
+export type VectorFloatArray = globalThis.VectorFloatArray;
 
 /**
  * Metadata value types supported by Vectorize.
+ *
+ * Re-export of Cloudflare's `VectorizeVectorMetadataValue`.
  */
-export type VectorizeVectorMetadata =
-  | string
-  | number
-  | boolean
-  | readonly string[];
+export type VectorizeVectorMetadataValue =
+  globalThis.VectorizeVectorMetadataValue;
+
+/**
+ * Metadata type for Vectorize vectors.
+ *
+ * Re-export of Cloudflare's `VectorizeVectorMetadata`.
+ */
+export type VectorizeVectorMetadata = globalThis.VectorizeVectorMetadata;
+
+/**
+ * Represents a single vector value set along with its associated metadata.
+ *
+ * Re-export of Cloudflare's `VectorizeVector`.
+ */
+export type VectorizeVector = globalThis.VectorizeVector;
+
+/**
+ * Represents a matched vector for a query along with its score.
+ *
+ * Re-export of Cloudflare's `VectorizeMatch`.
+ */
+export type VectorizeMatch = globalThis.VectorizeMatch;
+
+/**
+ * Result of a vector similarity search query.
+ *
+ * Re-export of Cloudflare's `VectorizeMatches`.
+ */
+export type VectorizeMatches = globalThis.VectorizeMatches;
+
+/**
+ * Index configuration.
+ *
+ * Cloudflare's `VectorizeIndexConfig` is a discriminated union:
+ * - Explicit config: `{ dimensions, metric }` — when the index was created with explicit settings.
+ * - Preset config: `{ preset }` — when the index was created using a named preset.
+ *
+ * Re-export of Cloudflare's `VectorizeIndexConfig`.
+ */
+export type VectorizeIndexConfig = globalThis.VectorizeIndexConfig;
+
+/**
+ * Metadata about an existing index (legacy VectorizeIndex).
+ *
+ * Re-export of Cloudflare's `VectorizeIndexDetails`.
+ */
+export type VectorizeIndexDetails = globalThis.VectorizeIndexDetails;
+
+/**
+ * Distance metric for vector similarity.
+ *
+ * Re-export of Cloudflare's `VectorizeDistanceMetric`.
+ */
+export type VectorizeDistanceMetric = globalThis.VectorizeDistanceMetric;
 
 // ── Filter types ──────────────────────────────────────────────────────
 
@@ -133,21 +188,11 @@ export type VectorizeMetadataFilter = Record<
 >;
 
 /**
- * Represents a single vector value set along with its associated metadata.
- */
-export interface VectorizeVector {
-  /** The ID for the vector. This can be user-defined, and must be unique. */
-  readonly id: string;
-  /** Metadata associated with the vector. */
-  readonly metadata?: Record<string, VectorizeVectorMetadata>;
-  /** The namespace this vector belongs to. */
-  readonly namespace?: string;
-  /** The vector values */
-  readonly values: VectorFloatArray | number[];
-}
-
-/**
  * Options for vector similarity search.
+ *
+ * Our subset of Cloudflare's `VectorizeQueryOptions`. We use our own
+ * `VectorizeMetadataFilter` for the `filter` field (structurally compatible)
+ * and restrict `returnMetadata` to `boolean` for simplicity.
  */
 export interface VectorizeQueryOptions {
   /**
@@ -171,32 +216,6 @@ export interface VectorizeQueryOptions {
 }
 
 /**
- * Represents a matched vector for a query along with its score.
- */
-export interface VectorizeMatch {
-  /** The ID of the matched vector. */
-  readonly id: string;
-  /** Metadata associated with the vector (if returnMetadata: true). */
-  readonly metadata?: Record<string, VectorizeVectorMetadata>;
-  /** The namespace this vector belongs to. */
-  readonly namespace?: string;
-  /** The score or rank for similarity. */
-  readonly score: number;
-  /** The vector values (if returnValues: true). */
-  readonly values?: VectorFloatArray | number[];
-}
-
-/**
- * Result of a vector similarity search query.
- */
-export interface VectorizeMatches {
-  /** Total number of matches (may be more than returned). */
-  readonly count: number;
-  /** Array of matched vectors with scores. */
-  readonly matches: readonly VectorizeMatch[];
-}
-
-/**
  * Result of a mutation operation (insert, upsert, delete).
  *
  * Compatible with both Cloudflare's legacy `VectorizeVectorMutation`
@@ -210,32 +229,6 @@ export interface VectorizeVectorMutation {
   readonly ids?: readonly string[];
   /** The unique identifier for the async mutation operation (new Vectorize class). */
   readonly mutationId?: string;
-}
-
-/**
- * Index configuration.
- */
-export interface VectorizeIndexConfig {
-  /** Number of dimensions for vectors in this index. */
-  readonly dimensions: number;
-  /** Distance metric used for similarity. */
-  readonly metric: "cosine" | "euclidean" | "dot-product";
-}
-
-/**
- * Metadata about an existing index.
- */
-export interface VectorizeIndexDetails {
-  /** The index configuration. */
-  readonly config: VectorizeIndexConfig;
-  /** A human readable description for the index. */
-  readonly description?: string;
-  /** The unique ID of the index. */
-  readonly id: string;
-  /** The name of the index. */
-  readonly name: string;
-  /** The number of records containing vectors within the index. */
-  readonly vectorsCount: number;
 }
 
 /**
@@ -263,10 +256,15 @@ export interface VectorizeMutationResult {
 
 /**
  * Simplified index info type.
+ *
+ * When the index was created with a named preset, `dimensions` will be `0`
+ * and `metric` will default to `"cosine"`. Check for `preset` to detect this case.
  */
 export interface VectorizeIndexInfo {
   readonly dimensions: number;
   readonly metric: "cosine" | "euclidean" | "dot-product";
+  /** Named preset used when creating the index (only present for preset-based configs). */
+  readonly preset?: string | undefined;
 }
 
 // ── Errors ──────────────────────────────────────────────────────────────
@@ -462,9 +460,19 @@ export class Vectorize extends ServiceMap.Service<
         "Failed to describe index",
         () => binding.describe()
       );
+      // VectorizeIndexConfig is a union: { dimensions, metric } | { preset }.
+      // When a preset is used, dimensions/metric are not available.
+      const config = result.config;
+      if ("dimensions" in config) {
+        return {
+          dimensions: config.dimensions,
+          metric: config.metric,
+        };
+      }
       return {
-        dimensions: result.config.dimensions,
-        metric: result.config.metric,
+        dimensions: 0,
+        metric: "cosine" as const,
+        preset: config.preset,
       };
     });
 
