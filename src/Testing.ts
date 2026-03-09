@@ -36,7 +36,7 @@
  * ```
  */
 
-import type { AIBinding } from "./AI.js";
+import type { AIBinding, AIRunOptions } from "./AI.js";
 import type { CacheBinding } from "./Cache.js";
 import type {
   D1Binding,
@@ -47,7 +47,9 @@ import type {
 import type {
   DOListOptions,
   DOSqlStorageCursor,
+  DOSqlStorageValue,
   DOStorageBinding,
+  DOTransactionBinding,
 } from "./DurableObject.js";
 import type { KVBinding } from "./KV.js";
 import type { QueueBinding } from "./Queue.js";
@@ -248,13 +250,16 @@ export const memoryKV = (): KVBinding => {
     });
   };
 
+  // Cast needed because CF's KVNamespace has many overloaded signatures
+  // (e.g. get with type: "text" | "json" | "arrayBuffer" | "stream")
+  // that our simplified mock does not fully implement.
   return {
     get,
     getWithMetadata,
     put,
     delete: deleteKey,
     list,
-  };
+  } as KVBinding;
 };
 
 // ── memoryD1 ────────────────────────────────────────────────────────────
@@ -395,6 +400,19 @@ export const memoryD1 = (): D1Binding => {
     return [...table];
   };
 
+  // Helper: create D1 meta object with all required fields
+  const makeMeta = (overrides: {
+    changes: number;
+    last_row_id: number;
+    rows_read: number;
+    rows_written: number;
+  }) => ({
+    duration: 0,
+    size_after: 0,
+    changed_db: overrides.changes > 0,
+    ...overrides,
+  });
+
   const prepare = (sql: string): D1PreparedStatement => {
     let boundParams: readonly unknown[] = [];
 
@@ -412,13 +430,12 @@ export const memoryD1 = (): D1Binding => {
           return Promise.resolve({
             results,
             success: true,
-            meta: {
-              duration: 0,
+            meta: makeMeta({
               changes: 0,
               last_row_id: 0,
               rows_read: results.length,
               rows_written: 0,
-            },
+            }),
           } as D1Result<T>);
         }
 
@@ -427,13 +444,12 @@ export const memoryD1 = (): D1Binding => {
           return Promise.resolve({
             results: [] as T[],
             success: true,
-            meta: {
-              duration: 0,
+            meta: makeMeta({
               changes: 1,
               last_row_id: lastRowId,
               rows_read: 0,
               rows_written: 1,
-            },
+            }),
           } as D1Result<T>);
         }
 
@@ -441,46 +457,43 @@ export const memoryD1 = (): D1Binding => {
         return Promise.resolve({
           results: [] as T[],
           success: true,
-          meta: {
-            duration: 0,
+          meta: makeMeta({
             changes: 0,
             last_row_id: 0,
             rows_read: 0,
             rows_written: 0,
-          },
+          }),
         } as D1Result<T>);
       },
 
-      run: (): Promise<D1Result<unknown>> => {
+      run: <T = Record<string, unknown>>(): Promise<D1Result<T>> => {
         const parsed = parseSQL(sql);
 
         if (parsed.type === "INSERT") {
           const lastRowId = executeInsert(sql, boundParams);
           return Promise.resolve({
-            results: [],
+            results: [] as T[],
             success: true,
-            meta: {
-              duration: 0,
+            meta: makeMeta({
               changes: 1,
               last_row_id: lastRowId,
               rows_read: 0,
               rows_written: 1,
-            },
-          });
+            }),
+          } as D1Result<T>);
         }
 
         // Default: success with no changes
         return Promise.resolve({
-          results: [],
+          results: [] as T[],
           success: true,
-          meta: {
-            duration: 0,
+          meta: makeMeta({
             changes: 0,
             last_row_id: 0,
             rows_read: 0,
             rows_written: 0,
-          },
-        });
+          }),
+        } as D1Result<T>);
       },
 
       first: <T = unknown>(_colName?: string): Promise<T | null> => {
@@ -493,14 +506,27 @@ export const memoryD1 = (): D1Binding => {
 
         return Promise.resolve(null);
       },
+
+      // Simplified mock: columnNames option is not fully implemented
+      raw: ((_options?: { columnNames?: boolean }): Promise<unknown[]> => {
+        const parsed = parseSQL(sql);
+
+        if (parsed.type === "SELECT") {
+          const results = executeSelect(sql, boundParams);
+          const rows = results.map((row) => Object.values(row));
+          return Promise.resolve(rows);
+        }
+
+        return Promise.resolve([]);
+      }) as D1PreparedStatement["raw"],
     };
 
     return statement;
   };
 
   const batch = async <T = unknown>(
-    statements: readonly D1PreparedStatement[]
-  ): Promise<readonly D1Result<T>[]> => {
+    statements: D1PreparedStatement[]
+  ): Promise<D1Result<T>[]> => {
     const results: D1Result<T>[] = [];
 
     for (const stmt of statements) {
@@ -606,12 +632,14 @@ export const memoryD1 = (): D1Binding => {
     return Promise.resolve(new ArrayBuffer(0));
   };
 
+  // Cast needed because CF's D1Database has additional methods
+  // (e.g. withSession) that our simplified mock does not implement.
   return {
     prepare,
     batch,
     exec,
     dump,
-  };
+  } as D1Binding;
 };
 
 // ── memoryR2 ────────────────────────────────────────────────────────────
@@ -883,22 +911,37 @@ export const memoryR2 = (): R2Binding => {
       return result.buffer as ArrayBuffer;
     };
 
-    const checksums: R2Checksums = {};
-    if (options?.md5) {
-      checksums.md5 = toArrayBufferHelper(options.md5);
-    }
-    if (options?.sha1) {
-      checksums.sha1 = toArrayBufferHelper(options.sha1);
-    }
-    if (options?.sha256) {
-      checksums.sha256 = toArrayBufferHelper(options.sha256);
-    }
-    if (options?.sha384) {
-      checksums.sha384 = toArrayBufferHelper(options.sha384);
-    }
-    if (options?.sha512) {
-      checksums.sha512 = toArrayBufferHelper(options.sha512);
-    }
+    const toHexString = (buf: ArrayBuffer): string =>
+      Array.from(new Uint8Array(buf))
+        .map((b) => b.toString(16).padStart(2, "0"))
+        .join("");
+
+    const md5 = options?.md5 ? toArrayBufferHelper(options.md5) : undefined;
+    const sha1 = options?.sha1 ? toArrayBufferHelper(options.sha1) : undefined;
+    const sha256 = options?.sha256
+      ? toArrayBufferHelper(options.sha256)
+      : undefined;
+    const sha384 = options?.sha384
+      ? toArrayBufferHelper(options.sha384)
+      : undefined;
+    const sha512 = options?.sha512
+      ? toArrayBufferHelper(options.sha512)
+      : undefined;
+
+    const checksums: R2Checksums = {
+      ...(md5 !== undefined && { md5 }),
+      ...(sha1 !== undefined && { sha1 }),
+      ...(sha256 !== undefined && { sha256 }),
+      ...(sha384 !== undefined && { sha384 }),
+      ...(sha512 !== undefined && { sha512 }),
+      toJSON: () => ({
+        ...(md5 !== undefined && { md5: toHexString(md5) }),
+        ...(sha1 !== undefined && { sha1: toHexString(sha1) }),
+        ...(sha256 !== undefined && { sha256: toHexString(sha256) }),
+        ...(sha384 !== undefined && { sha384: toHexString(sha384) }),
+        ...(sha512 !== undefined && { sha512: toHexString(sha512) }),
+      }),
+    };
 
     const stored: StoredObject = {
       data,
@@ -1490,24 +1533,21 @@ export const memoryDOStorage = (options?: {
   };
 
   const transaction = async <T>(
-    closure: (txn: DOStorageBinding) => T | Promise<T>
+    closure: (txn: DOTransactionBinding) => T | Promise<T>
   ): Promise<T> => {
     // Simple transaction: create a snapshot, run closure, commit or rollback
     const snapshot = new Map(store);
 
     try {
-      // Create a transaction binding that operates on the current store
-      const txnBinding: DOStorageBinding = {
+      // Create a transaction binding (subset of full storage — no deleteAll/transaction)
+      const txnBinding: DOTransactionBinding = {
         get,
         put,
         delete: deleteKey,
-        deleteAll,
         list,
         getAlarm,
         setAlarm,
         deleteAlarm,
-        transaction,
-        ...(options?.enableSql && sqlStorage ? { sql: sqlStorage } : {}),
       };
 
       const result = await closure(txnBinding);
@@ -1525,7 +1565,7 @@ export const memoryDOStorage = (options?: {
 
   // SQL storage implementation (simplified)
   const createEmptyCursor = <
-    T extends Record<string, unknown>,
+    T extends Record<string, DOSqlStorageValue>,
   >(): DOSqlStorageCursor<T> => ({
     toArray: (): T[] => [],
   });
@@ -1543,7 +1583,7 @@ export const memoryDOStorage = (options?: {
     }
   };
 
-  const handleSelect = <T extends Record<string, unknown>>(
+  const handleSelect = <T extends Record<string, DOSqlStorageValue>>(
     query: string
   ): DOSqlStorageCursor<T> => {
     const fromMatch = query.match(/FROM\s+(\w+)/i);
@@ -1566,7 +1606,12 @@ export const memoryDOStorage = (options?: {
         get databaseSize(): number {
           return sqlDatabaseSize;
         },
-        exec<T extends Record<string, unknown> = Record<string, unknown>>(
+        exec<
+          T extends Record<string, DOSqlStorageValue> = Record<
+            string,
+            DOSqlStorageValue
+          >,
+        >(
           query: string,
           ..._bindings: readonly unknown[]
         ): DOSqlStorageCursor<T> {
@@ -1973,32 +2018,16 @@ export const memoryAI = (config?: {
 }): AIBinding => {
   const responses = config?.responses ?? {};
 
-  const run = <T = unknown>(
+  const run = (
     model: string,
     _inputs: Record<string, unknown>,
-    options?: { stream?: boolean }
-  ): Promise<T> => {
+    _options?: AIRunOptions
+  ): Promise<unknown> => {
     // Get mock response for this model (or default to generic response)
-    const mockResponse =
-      (responses[model] as T) ??
-      ({
-        success: true,
-        result: "Mock AI response",
-      } as T);
-
-    // Handle streaming
-    if (options?.stream) {
-      // For streaming, wrap response in ReadableStream
-      const stream = new ReadableStream({
-        start(controller) {
-          const encoder = new TextEncoder();
-          const responseStr = JSON.stringify(mockResponse);
-          controller.enqueue(encoder.encode(responseStr));
-          controller.close();
-        },
-      });
-      return Promise.resolve(stream as T);
-    }
+    const mockResponse = responses[model] ?? {
+      success: true,
+      result: "Mock AI response",
+    };
 
     // Return mock response directly
     return Promise.resolve(mockResponse);
@@ -2101,7 +2130,7 @@ export const memoryAIGateway = (config?: {
       provider: string;
       endpoint: string;
       query: unknown;
-      headers?: Record<string, string>;
+      headers?: Record<string, unknown>;
     },
     responseData: unknown
   ) => {
@@ -2165,14 +2194,15 @@ export const memoryAIGateway = (config?: {
           provider: string;
           endpoint: string;
           query: unknown;
-          headers?: Record<string, string>;
+          headers?: Record<string, unknown>;
         }
       | readonly {
           provider: string;
           endpoint: string;
           query: unknown;
-          headers?: Record<string, string>;
-        }[]
+          headers?: Record<string, unknown>;
+        }[],
+    ..._args: readonly unknown[]
   ): Promise<Response> => {
     // Handle batch requests
     if (Array.isArray(requestOrRequests)) {
@@ -2200,7 +2230,7 @@ export const memoryAIGateway = (config?: {
       provider: string;
       endpoint: string;
       query: unknown;
-      headers?: Record<string, string>;
+      headers?: Record<string, unknown>;
     };
     const mockResponse = (responses[request.provider] as unknown) ?? {
       success: true,
