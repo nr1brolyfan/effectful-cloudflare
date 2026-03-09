@@ -18,7 +18,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "https://github.com/itsbroly/effectful-cloudflare.git"
+    "url": "https://github.com/nr1brolyfan/effectful-cloudflare.git"
+  },
+  "homepage": "https://github.com/nr1brolyfan/effectful-cloudflare#readme",
+  "bugs": {
+    "url": "https://github.com/nr1brolyfan/effectful-cloudflare/issues"
   },
   "license": "MIT",
   "author": "itsbroly",
