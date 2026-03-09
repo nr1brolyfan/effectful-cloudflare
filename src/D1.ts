@@ -723,7 +723,17 @@ export class D1Map extends LayerMap.Service<D1Map>()(
         D1,
         Effect.gen(function* () {
           const env = yield* WorkerEnv;
-          const binding = env[name] as D1Binding;
+          const binding = env[name] as D1Binding | undefined;
+
+          if (!binding) {
+            return yield* Effect.fail(
+              new Errors.BindingError({
+                service: "D1",
+                message: `D1 binding "${name}" not found in worker environment`,
+              })
+            );
+          }
+
           return yield* D1.make(binding);
         })
       ),

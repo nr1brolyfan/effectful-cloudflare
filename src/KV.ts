@@ -590,7 +590,17 @@ export class KVMap extends LayerMap.Service<KVMap>()(
         KV,
         Effect.gen(function* () {
           const env = yield* WorkerEnv;
-          const binding = env[name] as KVBinding;
+          const binding = env[name] as KVBinding | undefined;
+
+          if (!binding) {
+            return yield* Effect.fail(
+              new Errors.BindingError({
+                service: "KV",
+                message: `KV binding "${name}" not found in worker environment`,
+              })
+            );
+          }
+
           return yield* KV.make(binding);
         })
       ),

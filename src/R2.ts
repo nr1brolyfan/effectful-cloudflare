@@ -1101,7 +1101,17 @@ export class R2Map extends LayerMap.Service<R2Map>()(
         R2,
         Effect.gen(function* () {
           const env = yield* WorkerEnv;
-          const binding = env[name] as R2Binding;
+          const binding = env[name] as R2Binding | undefined;
+
+          if (!binding) {
+            return yield* Effect.fail(
+              new Errors.BindingError({
+                service: "R2",
+                message: `R2 binding "${name}" not found in worker environment`,
+              })
+            );
+          }
+
           return yield* R2.make(binding);
         })
       ),
