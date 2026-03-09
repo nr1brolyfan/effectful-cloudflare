@@ -19,10 +19,9 @@ describe("AI", () => {
       return Effect.gen(function* () {
         const ai = yield* AI;
 
-        const result = yield* ai.run<{ response: string }>(
-          "@cf/meta/llama-3-8b-instruct",
-          { prompt: "What is the capital of France?" }
-        );
+        const result = (yield* ai.run("@cf/meta/llama-3-8b-instruct", {
+          prompt: "What is the capital of France?",
+        })) as { response: string };
 
         expect(result.response).toBe("Paris is the capital of France.");
       }).pipe(Effect.provide(AI.layer(binding)));
@@ -34,21 +33,20 @@ describe("AI", () => {
       return Effect.gen(function* () {
         const ai = yield* AI;
 
-        const result = yield* ai.run<{ success: boolean; result: string }>(
-          "@cf/unknown/model",
-          { input: "test" }
-        );
+        const result = (yield* ai.run("@cf/unknown/model", {
+          input: "test",
+        })) as { success: boolean; result: string };
 
         expect(result.success).toBe(true);
         expect(result.result).toBe("Mock AI response");
       }).pipe(Effect.provide(AI.layer(binding)));
     });
 
-    it.effect("supports streaming option", () => {
+    it.effect("supports options parameter", () => {
       const binding = Testing.memoryAI({
         responses: {
           "@cf/meta/llama-3-8b-instruct": {
-            response: "Streaming response",
+            response: "Tagged response",
           },
         },
       });
@@ -56,13 +54,14 @@ describe("AI", () => {
       return Effect.gen(function* () {
         const ai = yield* AI;
 
-        const result = yield* ai.run<ReadableStream>(
+        // Pass valid AiOptions (tags, prefix, etc.)
+        const result = yield* ai.run(
           "@cf/meta/llama-3-8b-instruct",
           { prompt: "test" },
-          { stream: true }
+          { tags: ["test-tag"] }
         );
 
-        expect(result).toBeInstanceOf(ReadableStream);
+        expect(result).toEqual({ response: "Tagged response" });
       }).pipe(Effect.provide(AI.layer(binding)));
     });
   });
