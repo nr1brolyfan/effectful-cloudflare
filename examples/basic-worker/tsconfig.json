@@ -20,9 +20,7 @@
     "esModuleInterop": true,
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
-    "isolatedModules": true,
-
-    "types": ["@cloudflare/workers-types"]
+    "isolatedModules": true
   },
-  "include": ["src"]
+  "include": ["src", "worker-configuration.d.ts"]
 }
