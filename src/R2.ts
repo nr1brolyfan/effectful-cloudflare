@@ -275,8 +275,9 @@ export interface R2Range {
  */
 export class R2Error extends Data.TaggedError("R2Error")<{
   readonly operation: string;
+  readonly message: string;
   readonly key?: string | undefined;
-  readonly cause: unknown;
+  readonly cause?: unknown;
 }> {}
 
 /**
@@ -285,9 +286,10 @@ export class R2Error extends Data.TaggedError("R2Error")<{
  */
 export class R2MultipartError extends Data.TaggedError("R2MultipartError")<{
   readonly operation: "create" | "upload" | "complete" | "abort";
+  readonly message: string;
   readonly uploadId?: string;
   readonly key?: string;
-  readonly cause: unknown;
+  readonly cause?: unknown;
 }> {}
 
 /**
@@ -296,8 +298,9 @@ export class R2MultipartError extends Data.TaggedError("R2MultipartError")<{
  */
 export class R2PresignError extends Data.TaggedError("R2PresignError")<{
   readonly operation: "get" | "put";
+  readonly message: string;
   readonly key: string;
-  readonly cause: unknown;
+  readonly cause?: unknown;
 }> {}
 
 // ── Task 7.3: R2 result types ───────────────────────────────────────────
@@ -551,7 +554,7 @@ export class R2 extends ServiceMap.Service<
     readonly resumeMultipartUpload: (
       key: string,
       uploadId: string
-    ) => R2MultipartUpload;
+    ) => Effect.Effect<R2MultipartUpload, R2MultipartError>;
   }
 >()("effectful-cloudflare/R2") {
   // ── Task 7.5: Basic CRUD operations ──────────────────────────────────
@@ -589,7 +592,13 @@ export class R2 extends ServiceMap.Service<
         yield* Effect.logDebug("R2.get").pipe(Effect.annotateLogs({ key }));
         return yield* Effect.tryPromise({
           try: () => binding.get(key, options),
-          catch: (cause) => new R2Error({ operation: "get", key, cause }),
+          catch: (cause) =>
+            new R2Error({
+              operation: "get",
+              message: `Failed to get object: ${key}`,
+              key,
+              cause,
+            }),
         });
       });
 
@@ -620,7 +629,13 @@ export class R2 extends ServiceMap.Service<
         yield* Effect.logDebug("R2.put").pipe(Effect.annotateLogs({ key }));
         const obj = yield* Effect.tryPromise({
           try: () => binding.put(key, value, options),
-          catch: (cause) => new R2Error({ operation: "put", key, cause }),
+          catch: (cause) =>
+            new R2Error({
+              operation: "put",
+              message: `Failed to put object: ${key}`,
+              key,
+              cause,
+            }),
         });
 
         // R2 put can return null in rare cases (e.g., conditional put failed)
@@ -628,6 +643,7 @@ export class R2 extends ServiceMap.Service<
           return yield* Effect.fail(
             new R2Error({
               operation: "put",
+              message: `Conditional put failed for object: ${key}`,
               key,
               cause: new Error("Put operation returned null"),
             })
@@ -665,6 +681,7 @@ export class R2 extends ServiceMap.Service<
           catch: (cause) =>
             new R2Error({
               operation: "delete",
+              message: `Failed to delete object${typeof key === "string" ? `: ${key}` : "s"}`,
               key: typeof key === "string" ? key : undefined,
               cause,
             }),
@@ -675,7 +692,13 @@ export class R2 extends ServiceMap.Service<
         yield* Effect.logDebug("R2.head").pipe(Effect.annotateLogs({ key }));
         const obj = yield* Effect.tryPromise({
           try: () => binding.head(key),
-          catch: (cause) => new R2Error({ operation: "head", key, cause }),
+          catch: (cause) =>
+            new R2Error({
+              operation: "head",
+              message: `Failed to head object: ${key}`,
+              key,
+              cause,
+            }),
         });
 
         if (obj === null) {
@@ -722,7 +745,12 @@ export class R2 extends ServiceMap.Service<
 
         const result = yield* Effect.tryPromise({
           try: () => binding.list(bindingOptions),
-          catch: (cause) => new R2Error({ operation: "list", cause }),
+          catch: (cause) =>
+            new R2Error({
+              operation: "list",
+              message: "Failed to list objects",
+              cause,
+            }),
         });
 
         // Map R2Objects to R2ListResult with simplified R2ObjectInfo
@@ -758,6 +786,7 @@ export class R2 extends ServiceMap.Service<
             catch: (cause) =>
               new R2MultipartError({
                 operation: "create",
+                message: `Failed to create multipart upload for: ${key}`,
                 key,
                 cause,
               }),
@@ -765,10 +794,24 @@ export class R2 extends ServiceMap.Service<
         }
       );
 
-      const resumeMultipartUpload = (key: string, uploadId: string) => {
-        // resumeMultipartUpload is synchronous in R2 binding
-        return binding.resumeMultipartUpload(key, uploadId);
-      };
+      const resumeMultipartUpload = Effect.fn("R2.resumeMultipartUpload")(
+        function* (key: string, uploadId: string) {
+          yield* Effect.logDebug("R2.resumeMultipartUpload").pipe(
+            Effect.annotateLogs({ key, uploadId })
+          );
+          return yield* Effect.try({
+            try: () => binding.resumeMultipartUpload(key, uploadId),
+            catch: (cause) =>
+              new R2MultipartError({
+                operation: "upload",
+                message: `Failed to resume multipart upload for: ${key}`,
+                uploadId,
+                key,
+                cause,
+              }),
+          });
+        }
+      );
 
       return {
         get,
@@ -867,6 +910,7 @@ export class R2 extends ServiceMap.Service<
         catch: (cause) =>
           new R2PresignError({
             operation,
+            message: `Failed to generate presigned URL for: ${key}`,
             key,
             cause,
           }),

@@ -34,27 +34,6 @@ export class BindingError extends Data.TaggedError("BindingError")<{
   readonly message: string;
 }> {}
 
-/**
- * Wraps unexpected errors from Cloudflare APIs.
- *
- * Used to wrap native Cloudflare exceptions that occur during binding operations.
- * This is an internal error with an `unknown` cause field.
- *
- * @example
- * ```ts
- * new TransportError({
- *   service: "R2",
- *   operation: "put",
- *   cause: nativeError
- * })
- * ```
- */
-export class TransportError extends Data.TaggedError("TransportError")<{
-  readonly service: string;
-  readonly operation: string;
-  readonly cause: unknown;
-}> {}
-
 // ── Domain errors (schema-validated, serializable) ─────────────────────
 
 /**

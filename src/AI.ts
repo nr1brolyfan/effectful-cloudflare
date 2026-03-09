@@ -7,7 +7,7 @@
  * - `run` for untyped model inference
  * - `runSchema` for schema-validated model responses
  * - Streaming support via `options.stream`
- * - Typed errors (`AIError`, `AIModelError`)
+ * - Typed errors (`AIError`)
  * - Automatic tracing spans via `Effect.fn`
  *
  * @example
@@ -96,28 +96,8 @@ export interface AIRunOptions {
 export class AIError extends Data.TaggedError("AIError")<{
   readonly model: string;
   readonly operation: string;
-  readonly cause: unknown;
-}> {}
-
-/**
- * Model-specific error from Workers AI.
- *
- * Thrown when the AI model returns an error response (e.g., invalid input,
- * model capacity exceeded, unsupported features).
- *
- * @example
- * ```ts
- * new AIModelError({
- *   model: "@cf/meta/llama-3-8b-instruct",
- *   code: "invalid_input",
- *   message: "Input exceeds maximum token limit"
- * })
- * ```
- */
-export class AIModelError extends Data.TaggedError("AIModelError")<{
-  readonly model: string;
-  readonly code: string;
   readonly message: string;
+  readonly cause?: unknown;
 }> {}
 
 // ── Schema constraint ──────────────────────────────────────────────────
@@ -207,7 +187,13 @@ export class AI extends ServiceMap.Service<
       yield* Effect.logDebug("AI.run").pipe(Effect.annotateLogs({ model }));
       return yield* Effect.tryPromise({
         try: () => binding.run<T>(model, inputs, options),
-        catch: (cause) => new AIError({ model, operation: "run", cause }),
+        catch: (cause) =>
+          new AIError({
+            model,
+            operation: "run",
+            message: `AI inference failed for model: ${model}`,
+            cause,
+          }),
       });
     });
 

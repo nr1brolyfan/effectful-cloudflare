@@ -239,7 +239,20 @@ export const onScheduled = <E, R>(
 ): Pick<ExportedHandler, "scheduled"> => ({
   scheduled: async (controller, env, ctx) => {
     const layer = layers(env, ctx);
-    await Effect.runPromise(handler(controller).pipe(Effect.provide(layer)));
+    await Effect.runPromise(
+      handler(controller).pipe(
+        Effect.provide(layer),
+        Effect.catchCause((cause) =>
+          Effect.logError("Unhandled error in Worker.onScheduled handler").pipe(
+            Effect.annotateLogs({
+              service: "effectful-cloudflare/Worker",
+              operation: "onScheduled",
+              cause: Cause.pretty(cause),
+            })
+          )
+        )
+      )
+    );
   },
 });
 
@@ -284,7 +297,18 @@ export const onQueue = <T, E, R>(
   queue: async (batch, env, ctx) => {
     const layer = layers(env, ctx);
     await Effect.runPromise(
-      handler(batch as MessageBatch<T>).pipe(Effect.provide(layer))
+      handler(batch as MessageBatch<T>).pipe(
+        Effect.provide(layer),
+        Effect.catchCause((cause) =>
+          Effect.logError("Unhandled error in Worker.onQueue handler").pipe(
+            Effect.annotateLogs({
+              service: "effectful-cloudflare/Worker",
+              operation: "onQueue",
+              cause: Cause.pretty(cause),
+            })
+          )
+        )
+      )
     );
   },
 });

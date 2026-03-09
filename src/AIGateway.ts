@@ -11,7 +11,7 @@
  * - `run` / `runBatch` for sending requests through the gateway
  * - `getLog` / `patchLog` for accessing and annotating request logs
  * - `getUrl` for retrieving the gateway endpoint URL
- * - Typed errors (`AIGatewayError`, `AIGatewayRequestError`, `AIGatewayResponseError`)
+ * - Typed errors (`AIGatewayRequestError`, `AIGatewayResponseError`)
  *
  * @example
  * ```ts
@@ -211,27 +211,6 @@ export interface AIGatewayBinding {
 // ── Errors ──────────────────────────────────────────────────────────────
 
 /**
- * General AI Gateway operation failed.
- *
- * Module-specific error wrapping Cloudflare AI Gateway exceptions.
- * This is an internal error and is not serializable.
- *
- * @example
- * ```ts
- * new AIGatewayError({
- *   operation: "run",
- *   message: "Failed to proxy request to AI Gateway",
- *   cause: nativeError
- * })
- * ```
- */
-export class AIGatewayError extends Data.TaggedError("AIGatewayError")<{
-  readonly operation: string;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-/**
  * Request to AI Gateway failed.
  *
  * Thrown when the gateway itself is unreachable or rejects the request
@@ -339,24 +318,24 @@ export class AIGateway extends ServiceMap.Service<
       request: AIGatewayRequest
     ) => Effect.Effect<
       Response,
-      AIGatewayError | AIGatewayRequestError | AIGatewayResponseError
+      AIGatewayRequestError | AIGatewayResponseError
     >;
     readonly runBatch: (
       requests: readonly AIGatewayRequest[]
     ) => Effect.Effect<
       Response,
-      AIGatewayError | AIGatewayRequestError | AIGatewayResponseError
+      AIGatewayRequestError | AIGatewayResponseError
     >;
     readonly getLog: (
       logId: string
-    ) => Effect.Effect<AIGatewayLog, AIGatewayError | AIGatewayRequestError>;
+    ) => Effect.Effect<AIGatewayLog, AIGatewayRequestError>;
     readonly patchLog: (
       logId: string,
       options: { metadata?: Record<string, unknown>; score?: number }
-    ) => Effect.Effect<void, AIGatewayError | AIGatewayRequestError>;
+    ) => Effect.Effect<void, AIGatewayRequestError>;
     readonly getUrl: (
       provider?: string
-    ) => Effect.Effect<string, AIGatewayError | AIGatewayRequestError>;
+    ) => Effect.Effect<string, AIGatewayRequestError>;
   }
 >()("effectful-cloudflare/AIGateway") {
   /**

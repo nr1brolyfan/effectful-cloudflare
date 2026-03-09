@@ -205,26 +205,8 @@ export interface VectorizeIndexInfo {
  */
 export class VectorizeError extends Data.TaggedError("VectorizeError")<{
   readonly operation: string;
-  readonly cause: unknown;
-}> {}
-
-/**
- * Vector not found by ID.
- *
- * Thrown when attempting to retrieve a vector that doesn't exist.
- * This is an internal error and is not serializable.
- *
- * @example
- * ```ts
- * new VectorizeNotFoundError({
- *   vectorId: "vec_123"
- * })
- * ```
- */
-export class VectorizeNotFoundError extends Data.TaggedError(
-  "VectorizeNotFoundError"
-)<{
-  readonly vectorId: string;
+  readonly message: string;
+  readonly cause?: unknown;
 }> {}
 
 // ── Service ─────────────────────────────────────────────────────────────
@@ -294,10 +276,14 @@ export class Vectorize extends ServiceMap.Service<
     binding: VectorizeBinding
   ) {
     // Helper to wrap Vectorize operations with error handling
-    const wrapOperation = <A>(operation: string, thunk: () => Promise<A>) =>
+    const wrapOperation = <A>(
+      operation: string,
+      message: string,
+      thunk: () => Promise<A>
+    ) =>
       Effect.tryPromise({
         try: thunk,
-        catch: (cause) => new VectorizeError({ operation, cause }),
+        catch: (cause) => new VectorizeError({ operation, message, cause }),
       });
 
     const insert = Effect.fn("Vectorize.insert")(function* (
@@ -306,8 +292,10 @@ export class Vectorize extends ServiceMap.Service<
       yield* Effect.logDebug("Vectorize.insert").pipe(
         Effect.annotateLogs({ vectorCount: vectors.length })
       );
-      const result = yield* wrapOperation("insert", () =>
-        binding.insert(vectors)
+      const result = yield* wrapOperation(
+        "insert",
+        "Failed to insert vectors",
+        () => binding.insert(vectors)
       );
       return {
         mutationId: result.mutationId ?? "unknown",
@@ -320,8 +308,10 @@ export class Vectorize extends ServiceMap.Service<
       yield* Effect.logDebug("Vectorize.upsert").pipe(
         Effect.annotateLogs({ vectorCount: vectors.length })
       );
-      const result = yield* wrapOperation("upsert", () =>
-        binding.upsert(vectors)
+      const result = yield* wrapOperation(
+        "upsert",
+        "Failed to upsert vectors",
+        () => binding.upsert(vectors)
       );
       return {
         mutationId: result.mutationId ?? "unknown",
@@ -337,8 +327,10 @@ export class Vectorize extends ServiceMap.Service<
           ...(options?.topK !== undefined && { topK: options.topK }),
         })
       );
-      const result = yield* wrapOperation("query", () =>
-        binding.query(vector, options)
+      const result = yield* wrapOperation(
+        "query",
+        "Failed to query vectors",
+        () => binding.query(vector, options)
       );
       return {
         matches: result.matches,
@@ -352,7 +344,11 @@ export class Vectorize extends ServiceMap.Service<
       yield* Effect.logDebug("Vectorize.getByIds").pipe(
         Effect.annotateLogs({ idCount: ids.length })
       );
-      return yield* wrapOperation("getByIds", () => binding.getByIds(ids));
+      return yield* wrapOperation(
+        "getByIds",
+        "Failed to get vectors by IDs",
+        () => binding.getByIds(ids)
+      );
     });
 
     const deleteByIds = Effect.fn("Vectorize.deleteByIds")(function* (
@@ -361,8 +357,10 @@ export class Vectorize extends ServiceMap.Service<
       yield* Effect.logDebug("Vectorize.deleteByIds").pipe(
         Effect.annotateLogs({ idCount: ids.length })
       );
-      const result = yield* wrapOperation("deleteByIds", () =>
-        binding.deleteByIds(ids)
+      const result = yield* wrapOperation(
+        "deleteByIds",
+        "Failed to delete vectors by IDs",
+        () => binding.deleteByIds(ids)
       );
       return {
         mutationId: result.mutationId ?? "unknown",
@@ -371,7 +369,11 @@ export class Vectorize extends ServiceMap.Service<
 
     const describe = Effect.fn("Vectorize.describe")(function* () {
       yield* Effect.logDebug("Vectorize.describe");
-      const result = yield* wrapOperation("describe", () => binding.describe());
+      const result = yield* wrapOperation(
+        "describe",
+        "Failed to describe index",
+        () => binding.describe()
+      );
       return {
         dimensions: result.config.dimensions,
         metric: result.config.metric,

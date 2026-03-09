@@ -100,8 +100,9 @@ export interface KVBinding {
  */
 export class KVError extends Data.TaggedError("KVError")<{
   readonly operation: string;
+  readonly message: string;
   readonly key?: string;
-  readonly cause: unknown;
+  readonly cause?: unknown;
 }> {}
 
 // ── Options types ──────────────────────────────────────────────────────
@@ -218,20 +219,26 @@ export class KV extends ServiceMap.Service<
     readonly get: (
       key: string,
       options?: KVGetOptions
-    ) => Effect.Effect<unknown, KVError>;
+    ) => Effect.Effect<unknown, KVError | Errors.SchemaError>;
     readonly getOrFail: (
       key: string,
       options?: KVGetOptions
-    ) => Effect.Effect<unknown, KVError | Errors.NotFoundError>;
+    ) => Effect.Effect<
+      unknown,
+      KVError | Errors.SchemaError | Errors.NotFoundError
+    >;
     readonly getWithMetadata: <M = unknown>(
       key: string,
       options?: KVGetOptions
-    ) => Effect.Effect<KVValueWithMetadata<unknown, M>, KVError>;
+    ) => Effect.Effect<
+      KVValueWithMetadata<unknown, M>,
+      KVError | Errors.SchemaError
+    >;
     readonly put: (
       key: string,
       value: unknown,
       options?: KVPutOptions
-    ) => Effect.Effect<void, KVError>;
+    ) => Effect.Effect<void, KVError | Errors.SchemaError>;
     readonly delete: (key: string) => Effect.Effect<void, KVError>;
     readonly list: (
       options?: KVListOptions
@@ -266,21 +273,56 @@ export class KV extends ServiceMap.Service<
       const decode = schema ? Schema.decodeUnknownSync(schema) : undefined;
 
       const serialize = (value: unknown, key: string) =>
-        Effect.try({
-          try: () => {
-            const toEncode = encode ? encode(value as A) : value;
-            return JSON.stringify(toEncode);
-          },
-          catch: (cause) => new KVError({ operation: "put", key, cause }),
+        Effect.gen(function* () {
+          // Schema encode (if schema provided)
+          const toEncode = encode
+            ? yield* Effect.try({
+                try: () => encode(value as A),
+                catch: (cause) =>
+                  new Errors.SchemaError({
+                    message: `Schema encoding failed for KV key: ${key}`,
+                    cause: cause as Error,
+                  }),
+              })
+            : value;
+          // JSON stringify
+          return yield* Effect.try({
+            try: () => JSON.stringify(toEncode),
+            catch: (cause) =>
+              new KVError({
+                operation: "put",
+                message: `Failed to serialize value for key: ${key}`,
+                key,
+                cause,
+              }),
+          });
         });
 
       const deserialize = (raw: string, key: string) =>
-        Effect.try({
-          try: () => {
-            const parsed = JSON.parse(raw);
-            return decode ? decode(parsed) : (parsed as unknown);
-          },
-          catch: (cause) => new KVError({ operation: "get", key, cause }),
+        Effect.gen(function* () {
+          // JSON parse
+          const parsed = yield* Effect.try({
+            try: () => JSON.parse(raw),
+            catch: (cause) =>
+              new KVError({
+                operation: "get",
+                message: `Failed to parse JSON for key: ${key}`,
+                key,
+                cause,
+              }),
+          });
+          // Schema decode (if schema provided)
+          if (decode) {
+            return yield* Effect.try({
+              try: () => decode(parsed),
+              catch: (cause) =>
+                new Errors.SchemaError({
+                  message: `Schema decoding failed for KV key: ${key}`,
+                  cause: cause as Error,
+                }),
+            });
+          }
+          return parsed as unknown;
         });
 
       // ── Service methods ───────────────────────────────────────────
@@ -305,7 +347,13 @@ export class KV extends ServiceMap.Service<
                 cacheTtl: options.cacheTtl,
               }),
             }),
-          catch: (cause) => new KVError({ operation: "get", key, cause }),
+          catch: (cause) =>
+            new KVError({
+              operation: "get",
+              message: `Failed to get key: ${key}`,
+              key,
+              cause,
+            }),
         });
 
         if (raw === null) {
@@ -351,6 +399,7 @@ export class KV extends ServiceMap.Service<
           catch: (cause) =>
             new KVError({
               operation: "getWithMetadata",
+              message: `Failed to get key with metadata: ${key}`,
               key,
               cause,
             }),
@@ -386,7 +435,13 @@ export class KV extends ServiceMap.Service<
         const json = yield* serialize(value, key);
         return yield* Effect.tryPromise({
           try: () => binding.put(key, json, options),
-          catch: (cause) => new KVError({ operation: "put", key, cause }),
+          catch: (cause) =>
+            new KVError({
+              operation: "put",
+              message: `Failed to put key: ${key}`,
+              key,
+              cause,
+            }),
         });
       });
 
@@ -394,7 +449,13 @@ export class KV extends ServiceMap.Service<
         yield* Effect.logDebug("KV.delete").pipe(Effect.annotateLogs({ key }));
         return yield* Effect.tryPromise({
           try: () => binding.delete(key),
-          catch: (cause) => new KVError({ operation: "delete", key, cause }),
+          catch: (cause) =>
+            new KVError({
+              operation: "delete",
+              message: `Failed to delete key: ${key}`,
+              key,
+              cause,
+            }),
         });
       });
 
@@ -407,7 +468,12 @@ export class KV extends ServiceMap.Service<
         );
         return yield* Effect.tryPromise({
           try: () => binding.list(options),
-          catch: (cause) => new KVError({ operation: "list", cause }),
+          catch: (cause) =>
+            new KVError({
+              operation: "list",
+              message: "Failed to list keys",
+              cause,
+            }),
         });
       });
 

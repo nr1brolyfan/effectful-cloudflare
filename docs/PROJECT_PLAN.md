@@ -164,13 +164,6 @@ export class BindingError extends Data.TaggedError("BindingError")<{
   readonly message: string
 }> {}
 
-/** Wraps unexpected errors from CF APIs */
-export class TransportError extends Data.TaggedError("TransportError")<{
-  readonly service: string
-  readonly operation: string
-  readonly cause: unknown
-}> {}
-
 // ── Domain errors (schema-validated, serializable) ─────────────────────
 
 /** Schema decode/encode failed */
@@ -188,17 +181,17 @@ export class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()(
   {
     resource: Schema.String,
     key: Schema.String,
-  }
+  },
+  { httpApiStatus: 404 }
 ) {}
 ```
 
 ### Design decisions:
 
 1. **`BindingError`** uses `Data.TaggedError` — it's internal infrastructure, never serialized.
-2. **`TransportError`** uses `Data.TaggedError` — wraps native CF exceptions, `cause` is `unknown`.
-3. **`SchemaError`** uses `Schema.TaggedErrorClass` — it's a domain error users may want to serialize (e.g., in API responses).
-4. **`NotFoundError`** uses `Schema.TaggedErrorClass` — useful for HTTP 404 responses, serializable.
-5. Each module adds module-specific errors (e.g., `D1QueryError`, `R2ObjectError`) that extend or complement these.
+2. **`SchemaError`** uses `Schema.TaggedErrorClass` — it's a domain error users may want to serialize (e.g., in API responses). Used consistently across all modules for schema decode/encode failures.
+3. **`NotFoundError`** uses `Schema.TaggedErrorClass` — useful for HTTP 404 responses, serializable. Includes `httpApiStatus: 404`.
+4. Each module adds module-specific errors (e.g., `D1QueryError`, `R2Error`) that complement these. Module errors wrap native CF exceptions with `cause?: unknown` (optional) and always include `message: string`.
 
 ---
 
@@ -358,13 +351,13 @@ Each module follows this pattern:
 
 ```
 Errors (shared)
-├── BindingError        — binding not available
-├── TransportError      — CF API threw
-├── SchemaError         — decode/encode failed
-└── NotFoundError       — resource missing
+├── BindingError        — binding not available (Data.TaggedError, internal)
+├── SchemaError         — decode/encode failed (Schema.TaggedErrorClass, serializable)
+└── NotFoundError       — resource missing (Schema.TaggedErrorClass, serializable)
 
 KV (module-specific)
 └── KVError             — KV operation failed (wraps CF errors)
+    (schema errors → SchemaError via get/getOrFail/getWithMetadata/put)
 
 D1 (module-specific)
 ├── D1Error             — general D1 error
@@ -380,7 +373,23 @@ DurableObject (module-specific)
 ├── DOError             — client-side DO error
 ├── StorageError        — DO storage operation failed
 ├── AlarmError          — alarm operation failed
-└── SqlError            — DO SQLite query failed
+├── SqlError            — DO SQLite query failed
+└── WebSocketError      — WebSocket operation failed
+    (fetchJson schema errors → SchemaError)
+
+Queue (module-specific)
+├── QueueSendError      — send/sendBatch failed
+└── QueueConsumerError  — consumer handler failed
+
+AI (module-specific)
+└── AIError             — AI inference failed
+
+AIGateway (module-specific)
+├── AIGatewayRequestError  — gateway request failed
+└── AIGatewayResponseError — provider returned error response
+
+Vectorize (module-specific)
+└── VectorizeError      — vectorize operation failed
 ```
 
 ### Error type discrimination
@@ -405,10 +414,12 @@ Effect.gen(function*() {
 
 1. Every error has `_tag` for `Effect.catchTag`.
 2. Module-specific errors include `operation` field for tracing which method failed.
-3. Errors wrapping CF exceptions include `cause: unknown`.
-4. Key/identifier fields are included where applicable for debugging.
-5. `Schema.TaggedErrorClass` for errors that may cross serialization boundaries (API responses, RPC).
-6. `Data.TaggedError` for internal infrastructure errors.
+3. All module-specific errors include a `message: string` field with a human-readable description.
+4. Errors wrapping CF exceptions include `cause?: unknown` (optional).
+5. Key/identifier fields are included where applicable for debugging.
+6. `Schema.TaggedErrorClass` for errors that may cross serialization boundaries (API responses, RPC).
+7. `Data.TaggedError` for internal infrastructure errors.
+8. Schema decode/encode failures use shared `SchemaError` (not module-specific errors) for consistency.
 
 ---
 
@@ -919,7 +930,7 @@ interface R2Shape {
 
   // Multipart uploads
   readonly createMultipartUpload: (key: string, options?: R2MultipartOptions) => Effect<R2MultipartUpload, R2MultipartError>
-  readonly resumeMultipartUpload: (key: string, uploadId: string) => R2MultipartUpload
+  readonly resumeMultipartUpload: (key: string, uploadId: string) => Effect<R2MultipartUpload, R2MultipartError>
 
   // Presigned URLs (requires presign config)
   readonly presign: (key: string, options: R2PresignOptions) => Effect<string, R2PresignError>

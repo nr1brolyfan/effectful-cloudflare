@@ -26,6 +26,7 @@
  */
 
 import { Cause, Data, Effect, Layer, Schema, ServiceMap } from "effect";
+import * as Errors from "./Errors.js";
 
 // ── Binding types ──────────────────────────────────────────────────────
 
@@ -384,7 +385,7 @@ export class DOClient extends ServiceMap.Service<
       stub: DurableObjectStub,
       request: Request,
       schema?: PureSchema<A>
-    ) => Effect.Effect<A, DOError>;
+    ) => Effect.Effect<A, DOError | Errors.SchemaError>;
   }
 >()("effectful-cloudflare/DOClient") {
   /**
@@ -504,10 +505,9 @@ export class DOClient extends ServiceMap.Service<
         return yield* Effect.try({
           try: () => Schema.decodeUnknownSync(schema)(parsed) as A,
           catch: (cause) =>
-            new DOError({
-              operation: "fetchJson",
-              message: "Failed to validate response schema",
-              cause,
+            new Errors.SchemaError({
+              message: "Failed to validate Durable Object fetchJson response",
+              cause: cause as Error,
             }),
         });
       });

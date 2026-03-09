@@ -65,27 +65,6 @@ export interface QueueBinding<T = unknown> {
 // ── Errors ──────────────────────────────────────────────────────────────
 
 /**
- * General queue operation failed.
- *
- * Module-specific error wrapping Cloudflare Queue exceptions.
- * This is an internal error and is not serializable.
- *
- * @example
- * ```ts
- * new QueueError({
- *   operation: "send",
- *   message: "Failed to send message to queue",
- *   cause: nativeError
- * })
- * ```
- */
-export class QueueError extends Data.TaggedError("QueueError")<{
-  readonly operation: string;
-  readonly message: string;
-  readonly cause?: unknown;
-}> {}
-
-/**
  * Queue send or sendBatch operation failed.
  *
  * Specific error for message sending failures.
@@ -102,8 +81,9 @@ export class QueueError extends Data.TaggedError("QueueError")<{
  */
 export class QueueSendError extends Data.TaggedError("QueueSendError")<{
   readonly operation: "send" | "sendBatch";
+  readonly message: string;
   readonly messageCount: number;
-  readonly cause: unknown;
+  readonly cause?: unknown;
 }> {}
 
 /**
@@ -256,6 +236,7 @@ export class QueueProducer extends ServiceMap.Service<
           catch: (cause) =>
             new QueueSendError({
               operation: "send",
+              message: "Failed to send message to queue",
               messageCount: 1,
               cause,
             }),
@@ -273,6 +254,7 @@ export class QueueProducer extends ServiceMap.Service<
           catch: (cause) =>
             new QueueSendError({
               operation: "sendBatch",
+              message: `Failed to send batch of ${messages.length} messages to queue`,
               messageCount: messages.length,
               cause,
             }),
