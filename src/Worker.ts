@@ -130,6 +130,57 @@ export class ExecutionCtx extends ServiceMap.Service<
    * @returns Layer providing ExecutionCtx service
    */
   static layer = (ctx: ExecutionContext) => Layer.effect(this, this.make(ctx));
+
+  /**
+   * Schedule a background Effect to continue after the response is returned.
+   *
+   * This is a convenience static method that accesses the `ExecutionCtx`
+   * service from the Effect context and calls `waitUntil` on it.
+   * Requires `ExecutionCtx` to be provided in the layer.
+   *
+   * @param effect - Effect to run in the background (must not fail)
+   * @returns Effect that schedules the background work
+   *
+   * @example
+   * ```ts
+   * const handler = (request: Request) => Effect.gen(function*() {
+   *   // Schedule background logging
+   *   yield* ExecutionCtx.waitUntil(
+   *     Effect.log("Request processed").pipe(Effect.delay("1 second"))
+   *   )
+   *   return new Response("OK")
+   * })
+   * ```
+   */
+  static waitUntil = (effect: Effect.Effect<void, never>) =>
+    Effect.gen(function* () {
+      const ctx = yield* ExecutionCtx;
+      yield* ctx.waitUntil(effect);
+    });
+
+  /**
+   * Enable pass-through to origin on exception.
+   *
+   * This is a convenience static method that accesses the `ExecutionCtx`
+   * service from the Effect context and calls `passThroughOnException`.
+   * Requires `ExecutionCtx` to be provided in the layer.
+   *
+   * @returns Effect that enables pass-through on exception
+   *
+   * @example
+   * ```ts
+   * const handler = (request: Request) => Effect.gen(function*() {
+   *   yield* ExecutionCtx.passThroughOnException()
+   *   // If anything below throws, the request will be passed through to origin
+   *   return new Response("OK")
+   * })
+   * ```
+   */
+  static passThroughOnException = () =>
+    Effect.gen(function* () {
+      const ctx = yield* ExecutionCtx;
+      yield* ctx.passThroughOnException();
+    });
 }
 
 // ── Worker Entrypoint Functions ────────────────────────────────────────

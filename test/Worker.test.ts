@@ -107,6 +107,27 @@ it.effect("ExecutionCtx.layer provides the service", () =>
   }).pipe(Effect.provide(ExecutionCtx.layer(mockExecutionContext())))
 );
 
+// ── ExecutionCtx static helpers ──────────────────────────────────────────
+
+it.effect("ExecutionCtx.waitUntil static schedules background work", () => {
+  const ctx = mockExecutionContext();
+  return Effect.gen(function* () {
+    yield* ExecutionCtx.waitUntil(Effect.void);
+    expect(ctx.promises).toHaveLength(1);
+  }).pipe(Effect.provide(ExecutionCtx.layer(ctx)));
+});
+
+it.effect(
+  "ExecutionCtx.passThroughOnException static enables pass-through",
+  () => {
+    const ctx = mockExecutionContext();
+    return Effect.gen(function* () {
+      yield* ExecutionCtx.passThroughOnException();
+      expect(ctx.passedThrough).toHaveLength(1);
+    }).pipe(Effect.provide(ExecutionCtx.layer(ctx)));
+  }
+);
+
 // ── serve() ─────────────────────────────────────────────────────────────
 
 it("serve returns handler with fetch method", () => {
