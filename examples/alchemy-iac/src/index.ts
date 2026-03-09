@@ -112,14 +112,9 @@ const getAnalytics = () =>
     const db = yield* D1;
 
     // Ensure table exists
-    yield* db.exec(`
-			CREATE TABLE IF NOT EXISTS analytics_events (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				event TEXT NOT NULL,
-				metadata TEXT,
-				timestamp TEXT NOT NULL
-			)
-		`);
+    yield* db.exec(
+      "CREATE TABLE IF NOT EXISTS analytics_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL, metadata TEXT, timestamp TEXT NOT NULL)"
+    );
 
     // Query event counts
     const summary = yield* db.query<{
@@ -146,14 +141,9 @@ const recordEvent = (data: { event: string; metadata?: unknown }) =>
     const db = yield* D1;
 
     // Ensure table exists
-    yield* db.exec(`
-			CREATE TABLE IF NOT EXISTS analytics_events (
-				id INTEGER PRIMARY KEY AUTOINCREMENT,
-				event TEXT NOT NULL,
-				metadata TEXT,
-				timestamp TEXT NOT NULL
-			)
-		`);
+    yield* db.exec(
+      "CREATE TABLE IF NOT EXISTS analytics_events (id INTEGER PRIMARY KEY AUTOINCREMENT, event TEXT NOT NULL, metadata TEXT, timestamp TEXT NOT NULL)"
+    );
 
     // Insert event
     yield* db.query(
@@ -311,7 +301,7 @@ const handler = (request: Request) =>
 
 // ── Worker Export ──────────────────────────────────────────────────────────
 
-export default serve(handler, (env: Env) => {
+export default serve(handler, (env: Env, _ctx) => {
   return Layer.mergeAll(
     KV.layer(env.CACHE_KV, CacheValue),
     D1.layer(env.ANALYTICS_DB),

@@ -27,7 +27,7 @@
  * ```
  */
 
-import { Effect, Layer, ServiceMap } from "effect";
+import { Cause, Effect, Layer, ServiceMap } from "effect";
 
 // ── WorkerEnv Service ──────────────────────────────────────────────────
 
@@ -166,22 +166,31 @@ export class ExecutionCtx extends ServiceMap.Service<
  * )
  * ```
  */
-export const serve = <Env extends object, E, R>(
+export const serve = <E, R>(
   handler: (request: Request) => Effect.Effect<Response, E, R>,
-  layers: (env: Env, ctx: ExecutionContext) => Layer.Layer<R>
-): ExportedHandler<Env> => ({
+  // biome-ignore lint/suspicious/noExplicitAny: env type must be unconstrained to accept user-annotated types
+  layers: (env: any, ctx: ExecutionContext) => Layer.Layer<R>
+): ExportedHandler => ({
   fetch: (request, env, ctx) => {
-    const layer = layers(env as Env, ctx);
+    const layer = layers(env, ctx);
     return Effect.runPromise(
       handler(request).pipe(
         Effect.provide(layer),
-        Effect.catchCause(() =>
-          Effect.succeed(
-            new Response(JSON.stringify({ error: "Internal Server Error" }), {
-              status: 500,
-              headers: { "Content-Type": "application/json" },
-            })
-          )
+        Effect.catchCause((cause) =>
+          Effect.gen(function* () {
+            yield* Effect.logError("Unhandled error in Worker.serve handler");
+            console.error(
+              "[effectful-cloudflare] Unhandled worker error:",
+              Cause.pretty(cause)
+            );
+            return new Response(
+              JSON.stringify({ error: "Internal Server Error" }),
+              {
+                status: 500,
+                headers: { "Content-Type": "application/json" },
+              }
+            );
+          })
         )
       )
     );
@@ -219,12 +228,13 @@ export const serve = <Env extends object, E, R>(
  * )
  * ```
  */
-export const onScheduled = <Env extends object, E, R>(
+export const onScheduled = <E, R>(
   handler: (controller: ScheduledController) => Effect.Effect<void, E, R>,
-  layers: (env: Env, ctx: ExecutionContext) => Layer.Layer<R>
-): Pick<ExportedHandler<Env>, "scheduled"> => ({
+  // biome-ignore lint/suspicious/noExplicitAny: env type must be unconstrained to accept user-annotated types
+  layers: (env: any, ctx: ExecutionContext) => Layer.Layer<R>
+): Pick<ExportedHandler, "scheduled"> => ({
   scheduled: async (controller, env, ctx) => {
-    const layer = layers(env as Env, ctx);
+    const layer = layers(env, ctx);
     await Effect.runPromise(handler(controller).pipe(Effect.provide(layer)));
   },
 });
@@ -262,12 +272,13 @@ export const onScheduled = <Env extends object, E, R>(
  * )
  * ```
  */
-export const onQueue = <Env extends object, T, E, R>(
+export const onQueue = <T, E, R>(
   handler: (batch: MessageBatch<T>) => Effect.Effect<void, E, R>,
-  layers: (env: Env, ctx: ExecutionContext) => Layer.Layer<R>
-): Pick<ExportedHandler<Env>, "queue"> => ({
+  // biome-ignore lint/suspicious/noExplicitAny: env type must be unconstrained to accept user-annotated types
+  layers: (env: any, ctx: ExecutionContext) => Layer.Layer<R>
+): Pick<ExportedHandler, "queue"> => ({
   queue: async (batch, env, ctx) => {
-    const layer = layers(env as Env, ctx);
+    const layer = layers(env, ctx);
     await Effect.runPromise(
       handler(batch as MessageBatch<T>).pipe(Effect.provide(layer))
     );

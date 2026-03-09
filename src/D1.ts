@@ -368,8 +368,13 @@ export class D1 extends ServiceMap.Service<
       });
 
       const exec = Effect.fn("D1.exec")(function* (sql: string) {
+        // Normalize whitespace: collapse runs of whitespace (including tabs
+        // from template-literal indentation) into single spaces and trim.
+        // D1's exec() splits on newlines internally; multi-line template
+        // literals with tab indentation can cause "incomplete input" errors.
+        const normalized = sql.replace(/\s+/g, " ").trim();
         return yield* Effect.tryPromise({
-          try: () => binding.exec(sql),
+          try: () => binding.exec(normalized),
           catch: (cause) =>
             new D1Error({
               operation: "exec",
