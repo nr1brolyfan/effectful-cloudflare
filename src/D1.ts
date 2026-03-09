@@ -198,6 +198,76 @@ export class D1MigrationError extends Data.TaggedError("D1MigrationError")<{
   readonly cause?: unknown;
 }> {}
 
+// ── SQL Helpers ────────────────────────────────────────────────────────
+
+/**
+ * Scan past a quoted string literal, handling escaped quotes ('' or "").
+ * Returns the index after the closing quote.
+ * @internal
+ */
+const scanQuotedString = (
+  sql: string,
+  start: number,
+  quote: string
+): number => {
+  let i = start + 1; // skip opening quote
+  while (i < sql.length) {
+    if (sql[i] === quote) {
+      // Escaped quote (two consecutive) — skip both
+      if (i + 1 < sql.length && sql[i + 1] === quote) {
+        i += 2;
+      } else {
+        return i + 1; // skip closing quote
+      }
+    } else {
+      i++;
+    }
+  }
+  return i; // unterminated string — return end
+};
+
+/**
+ * Normalize whitespace in SQL while preserving string literals.
+ *
+ * Splits the SQL into alternating unquoted/quoted segments.
+ * Whitespace is collapsed to single spaces only in unquoted segments.
+ * Single-quoted and double-quoted string literals are left untouched.
+ *
+ * @internal
+ */
+const normalizeSQL = (sql: string): string => {
+  const result: string[] = [];
+  let i = 0;
+  let segmentStart = 0;
+
+  while (i < sql.length) {
+    const ch = sql[i];
+
+    if (ch === "'" || ch === '"') {
+      // Flush unquoted segment with whitespace normalization
+      if (i > segmentStart) {
+        result.push(sql.slice(segmentStart, i).replace(/\s+/g, " "));
+      }
+
+      const quoteStart = i;
+      i = scanQuotedString(sql, i, ch);
+
+      // Append the quoted string verbatim
+      result.push(sql.slice(quoteStart, i));
+      segmentStart = i;
+    } else {
+      i++;
+    }
+  }
+
+  // Flush remaining unquoted segment
+  if (segmentStart < sql.length) {
+    result.push(sql.slice(segmentStart).replace(/\s+/g, " "));
+  }
+
+  return result.join("").trim();
+};
+
 // ── D1 Service ─────────────────────────────────────────────────────────
 
 /**
@@ -383,11 +453,11 @@ export class D1 extends ServiceMap.Service<
         yield* Effect.logDebug("D1.exec").pipe(
           Effect.annotateLogs({ sql: sql.slice(0, 200) })
         );
-        // Normalize whitespace: collapse runs of whitespace (including tabs
-        // from template-literal indentation) into single spaces and trim.
-        // D1's exec() splits on newlines internally; multi-line template
-        // literals with tab indentation can cause "incomplete input" errors.
-        const normalized = sql.replace(/\s+/g, " ").trim();
+        // Normalize whitespace outside of string literals only.
+        // We split the SQL into segments: quoted strings (single or double)
+        // are preserved verbatim, while unquoted segments have their
+        // whitespace collapsed to single spaces.
+        const normalized = normalizeSQL(sql);
         return yield* Effect.tryPromise({
           try: () => binding.exec(normalized),
           catch: (cause) =>

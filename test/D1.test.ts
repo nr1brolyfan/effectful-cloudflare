@@ -587,6 +587,55 @@ it.effect("migrate skips already applied migrations", () =>
   }).pipe(Effect.provide(D1.layer(memoryD1())))
 );
 
+// ── exec whitespace normalization ───────────────────────────────────────
+
+it.effect("exec preserves string literals with multiple spaces", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+
+    yield* db.exec("CREATE TABLE logs (id INTEGER PRIMARY KEY, message TEXT)");
+
+    // String literal with multiple spaces should be preserved
+    yield* db.exec(
+      "INSERT INTO logs (id, message) VALUES (1, 'hello   world')"
+    );
+
+    const logs = yield* db.query<{ id: number; message: string }>(
+      "SELECT * FROM logs WHERE id = ?",
+      [1]
+    );
+
+    expect(logs).toHaveLength(1);
+    expect(logs[0]?.message).toBe("hello   world");
+  }).pipe(Effect.provide(D1.layer(memoryD1())))
+);
+
+it.effect("exec normalizes whitespace outside string literals", () =>
+  Effect.gen(function* () {
+    const db = yield* D1;
+
+    // Use template literal with indentation — whitespace outside strings
+    // should be collapsed, but strings preserved
+    yield* db.exec(`
+      CREATE TABLE   test   (id INTEGER PRIMARY KEY, name TEXT)
+    `);
+
+    yield* db.exec(`
+      INSERT INTO test (id, name) VALUES (1, 'Alice   Smith')
+    `);
+
+    const rows = yield* db.query<{ id: number; name: string }>(
+      "SELECT * FROM test WHERE id = ?",
+      [1]
+    );
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.name).toBe("Alice   Smith");
+  }).pipe(Effect.provide(D1.layer(memoryD1())))
+);
+
+// ── Migration runner ────────────────────────────────────────────────────
+
 it.effect("migrate runs migrations in order", () =>
   Effect.gen(function* () {
     const db = yield* D1;
