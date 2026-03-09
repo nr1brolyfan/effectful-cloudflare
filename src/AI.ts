@@ -204,6 +204,7 @@ export class AI extends ServiceMap.Service<
       inputs: Record<string, unknown>,
       options?: AIRunOptions
     ) {
+      yield* Effect.logDebug("AI.run").pipe(Effect.annotateLogs({ model }));
       return yield* Effect.tryPromise({
         try: () => binding.run<T>(model, inputs, options),
         catch: (cause) => new AIError({ model, operation: "run", cause }),
@@ -216,6 +217,9 @@ export class AI extends ServiceMap.Service<
       inputs: Record<string, unknown>,
       options?: AIRunOptions
     ) {
+      yield* Effect.logDebug("AI.runSchema").pipe(
+        Effect.annotateLogs({ model })
+      );
       // First run the model to get raw response
       const rawResponse = yield* run<unknown>(model, inputs, options);
 

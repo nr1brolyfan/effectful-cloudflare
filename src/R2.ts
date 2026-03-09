@@ -586,6 +586,7 @@ export class R2 extends ServiceMap.Service<
         key: string,
         options?: R2GetOptions
       ) {
+        yield* Effect.logDebug("R2.get").pipe(Effect.annotateLogs({ key }));
         return yield* Effect.tryPromise({
           try: () => binding.get(key, options),
           catch: (cause) => new R2Error({ operation: "get", key, cause }),
@@ -596,6 +597,9 @@ export class R2 extends ServiceMap.Service<
         key: string,
         options?: R2GetOptions
       ) {
+        yield* Effect.logDebug("R2.getOrFail").pipe(
+          Effect.annotateLogs({ key })
+        );
         const obj = yield* get(key, options);
         if (obj === null) {
           return yield* Effect.fail(
@@ -613,6 +617,7 @@ export class R2 extends ServiceMap.Service<
         value: R2PutValue,
         options?: R2PutOptions
       ) {
+        yield* Effect.logDebug("R2.put").pipe(Effect.annotateLogs({ key }));
         const obj = yield* Effect.tryPromise({
           try: () => binding.put(key, value, options),
           catch: (cause) => new R2Error({ operation: "put", key, cause }),
@@ -648,6 +653,11 @@ export class R2 extends ServiceMap.Service<
       const del = Effect.fn("R2.delete")(function* (
         key: string | readonly string[]
       ) {
+        yield* Effect.logDebug("R2.delete").pipe(
+          Effect.annotateLogs({
+            key: typeof key === "string" ? key : `[${key.length} keys]`,
+          })
+        );
         // Convert readonly array to mutable for binding
         const keyArg = typeof key === "string" ? key : [...key];
         return yield* Effect.tryPromise({
@@ -662,6 +672,7 @@ export class R2 extends ServiceMap.Service<
       });
 
       const head = Effect.fn("R2.head")(function* (key: string) {
+        yield* Effect.logDebug("R2.head").pipe(Effect.annotateLogs({ key }));
         const obj = yield* Effect.tryPromise({
           try: () => binding.head(key),
           catch: (cause) => new R2Error({ operation: "head", key, cause }),
@@ -688,6 +699,12 @@ export class R2 extends ServiceMap.Service<
       });
 
       const list = Effect.fn("R2.list")(function* (options?: R2ListOptions) {
+        yield* Effect.logDebug("R2.list").pipe(
+          Effect.annotateLogs({
+            ...(options?.prefix !== undefined && { prefix: options.prefix }),
+            ...(options?.limit !== undefined && { limit: options.limit }),
+          })
+        );
         // Convert readonly array to mutable for binding
         const bindingOptions: Parameters<R2Binding["list"]>[0] = options
           ? {
@@ -733,6 +750,9 @@ export class R2 extends ServiceMap.Service<
 
       const createMultipartUpload = Effect.fn("R2.createMultipartUpload")(
         function* (key: string, options?: R2MultipartOptions) {
+          yield* Effect.logDebug("R2.createMultipartUpload").pipe(
+            Effect.annotateLogs({ key })
+          );
           return yield* Effect.tryPromise({
             try: () => binding.createMultipartUpload(key, options),
             catch: (cause) =>
@@ -829,6 +849,9 @@ export class R2 extends ServiceMap.Service<
     Effect.fn("R2.presign")(function* () {
       const operation = options?.operation ?? "get";
       const expiresIn = options?.expiresIn ?? 3600;
+      yield* Effect.logDebug("R2.presign").pipe(
+        Effect.annotateLogs({ key, operation, expiresIn })
+      );
       const contentType = options?.httpMetadata?.contentType;
 
       return yield* Effect.tryPromise({

@@ -305,14 +305,17 @@ export class Browser extends ServiceMap.Service<
   static make = Effect.fn("Browser.make")(function* (binding: BrowserBinding) {
     // launch - Create new browser session
     const launch = (options?: BrowserLaunchOptions) =>
-      Effect.tryPromise({
-        try: () => binding.launch(options),
-        catch: (cause) =>
-          new BrowserError({
-            operation: "launch",
-            message: "Failed to launch browser session",
-            cause,
-          }),
+      Effect.gen(function* () {
+        yield* Effect.logDebug("Browser.launch");
+        return yield* Effect.tryPromise({
+          try: () => binding.launch(options),
+          catch: (cause) =>
+            new BrowserError({
+              operation: "launch",
+              message: "Failed to launch browser session",
+              cause,
+            }),
+        });
       }).pipe(Effect.withSpan("Browser.launch"));
 
     // navigate - Navigate page to URL
@@ -321,14 +324,19 @@ export class Browser extends ServiceMap.Service<
       url: string,
       options?: BrowserGotoOptions
     ) =>
-      Effect.tryPromise({
-        try: () => page.goto(url, options),
-        catch: (cause) =>
-          new BrowserError({
-            operation: "navigate",
-            message: `Failed to navigate to ${url}`,
-            cause,
-          }),
+      Effect.gen(function* () {
+        yield* Effect.logDebug("Browser.navigate").pipe(
+          Effect.annotateLogs({ url })
+        );
+        return yield* Effect.tryPromise({
+          try: () => page.goto(url, options),
+          catch: (cause) =>
+            new BrowserError({
+              operation: "navigate",
+              message: `Failed to navigate to ${url}`,
+              cause,
+            }),
+        });
       }).pipe(Effect.withSpan("Browser.navigate"));
 
     // screenshot - Capture page as image
@@ -336,38 +344,47 @@ export class Browser extends ServiceMap.Service<
       page: BrowserPage,
       options?: BrowserScreenshotOptions
     ) =>
-      Effect.tryPromise({
-        try: () => page.screenshot(options),
-        catch: (cause) =>
-          new BrowserError({
-            operation: "screenshot",
-            message: "Failed to capture screenshot",
-            cause,
-          }),
+      Effect.gen(function* () {
+        yield* Effect.logDebug("Browser.screenshot");
+        return yield* Effect.tryPromise({
+          try: () => page.screenshot(options),
+          catch: (cause) =>
+            new BrowserError({
+              operation: "screenshot",
+              message: "Failed to capture screenshot",
+              cause,
+            }),
+        });
       }).pipe(Effect.withSpan("Browser.screenshot"));
 
     // pdf - Generate PDF from page
     const pdf = (page: BrowserPage, options?: BrowserPdfOptions) =>
-      Effect.tryPromise({
-        try: () => page.pdf(options),
-        catch: (cause) =>
-          new BrowserError({
-            operation: "pdf",
-            message: "Failed to generate PDF",
-            cause,
-          }),
+      Effect.gen(function* () {
+        yield* Effect.logDebug("Browser.pdf");
+        return yield* Effect.tryPromise({
+          try: () => page.pdf(options),
+          catch: (cause) =>
+            new BrowserError({
+              operation: "pdf",
+              message: "Failed to generate PDF",
+              cause,
+            }),
+        });
       }).pipe(Effect.withSpan("Browser.pdf"));
 
     // evaluate - Execute JavaScript in page context
     const evaluate = <T = unknown>(page: BrowserPage, script: string) =>
-      Effect.tryPromise<T, BrowserError>({
-        try: () => page.evaluate<T>(script),
-        catch: (cause) =>
-          new BrowserError({
-            operation: "evaluate",
-            message: "Failed to evaluate JavaScript",
-            cause,
-          }),
+      Effect.gen(function* () {
+        yield* Effect.logDebug("Browser.evaluate");
+        return yield* Effect.tryPromise<T, BrowserError>({
+          try: () => page.evaluate<T>(script),
+          catch: (cause) =>
+            new BrowserError({
+              operation: "evaluate",
+              message: "Failed to evaluate JavaScript",
+              cause,
+            }),
+        });
       }).pipe(Effect.withSpan("Browser.evaluate"));
 
     return Browser.of({

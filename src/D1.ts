@@ -286,6 +286,9 @@ export class D1 extends ServiceMap.Service<
       const query = Effect.fn("D1.query")(function* <
         T = Record<string, unknown>,
       >(sql: string, params?: readonly unknown[]) {
+        yield* Effect.logDebug("D1.query").pipe(
+          Effect.annotateLogs({ sql: sql.slice(0, 200) })
+        );
         const result = yield* Effect.tryPromise({
           try: () =>
             binding
@@ -318,6 +321,9 @@ export class D1 extends ServiceMap.Service<
       const queryFirst = Effect.fn("D1.queryFirst")(function* <
         T = Record<string, unknown>,
       >(sql: string, params?: readonly unknown[]) {
+        yield* Effect.logDebug("D1.queryFirst").pipe(
+          Effect.annotateLogs({ sql: sql.slice(0, 200) })
+        );
         const result = yield* Effect.tryPromise({
           try: () =>
             binding
@@ -339,6 +345,9 @@ export class D1 extends ServiceMap.Service<
       const queryFirstOrFail = Effect.fn("D1.queryFirstOrFail")(function* <
         T = Record<string, unknown>,
       >(sql: string, params?: readonly unknown[]) {
+        yield* Effect.logDebug("D1.queryFirstOrFail").pipe(
+          Effect.annotateLogs({ sql: sql.slice(0, 200) })
+        );
         const result = yield* queryFirst<T>(sql, params);
 
         if (result === null) {
@@ -356,6 +365,9 @@ export class D1 extends ServiceMap.Service<
       const batch = Effect.fn("D1.batch")(function* (
         statements: readonly D1PreparedStatement[]
       ) {
+        yield* Effect.logDebug("D1.batch").pipe(
+          Effect.annotateLogs({ statementCount: statements.length })
+        );
         return yield* Effect.tryPromise({
           try: () => binding.batch(statements),
           catch: (cause) =>
@@ -368,6 +380,9 @@ export class D1 extends ServiceMap.Service<
       });
 
       const exec = Effect.fn("D1.exec")(function* (sql: string) {
+        yield* Effect.logDebug("D1.exec").pipe(
+          Effect.annotateLogs({ sql: sql.slice(0, 200) })
+        );
         // Normalize whitespace: collapse runs of whitespace (including tabs
         // from template-literal indentation) into single spaces and trim.
         // D1's exec() splits on newlines internally; multi-line template
@@ -390,6 +405,9 @@ export class D1 extends ServiceMap.Service<
         sql: string,
         params?: readonly unknown[]
       ) {
+        yield* Effect.logDebug("D1.querySchema").pipe(
+          Effect.annotateLogs({ sql: sql.slice(0, 200) })
+        );
         // Get raw results first
         const rawResults = yield* query(sql, params);
 
@@ -416,6 +434,9 @@ export class D1 extends ServiceMap.Service<
         sql: string,
         params?: readonly unknown[]
       ) {
+        yield* Effect.logDebug("D1.queryFirstSchema").pipe(
+          Effect.annotateLogs({ sql: sql.slice(0, 200) })
+        );
         // Get first raw result
         const rawResult = yield* queryFirst(sql, params);
 
@@ -442,6 +463,9 @@ export class D1 extends ServiceMap.Service<
       const migrate = Effect.fn("D1.migrate")(function* (
         migrations: readonly Migration[]
       ) {
+        yield* Effect.logInfo("D1.migrate: running migrations").pipe(
+          Effect.annotateLogs({ migrationCount: migrations.length })
+        );
         // Create migrations tracking table if it doesn't exist
         yield* Effect.tryPromise({
           try: () =>
@@ -491,6 +515,9 @@ export class D1 extends ServiceMap.Service<
         // Apply pending migrations in order
         for (const migration of migrations) {
           if (!appliedSet.has(migration.name)) {
+            yield* Effect.logInfo("D1.migrate: applying migration").pipe(
+              Effect.annotateLogs({ migrationName: migration.name })
+            );
             // Execute migration SQL
             yield* Effect.tryPromise({
               try: () => binding.exec(migration.sql),

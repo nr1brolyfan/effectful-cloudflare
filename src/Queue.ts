@@ -250,6 +250,7 @@ export class QueueProducer extends ServiceMap.Service<
         message: unknown,
         options?: QueueSendOptions
       ) {
+        yield* Effect.logDebug("QueueProducer.send");
         return yield* Effect.tryPromise({
           try: () => binding.send(message, options),
           catch: (cause) =>
@@ -264,6 +265,9 @@ export class QueueProducer extends ServiceMap.Service<
       const sendBatch = Effect.fn("QueueProducer.sendBatch")(function* (
         messages: readonly QueueBatchMessage<unknown>[]
       ) {
+        yield* Effect.logDebug("QueueProducer.sendBatch").pipe(
+          Effect.annotateLogs({ messageCount: messages.length })
+        );
         return yield* Effect.tryPromise({
           try: () => binding.sendBatch(messages),
           catch: (cause) =>

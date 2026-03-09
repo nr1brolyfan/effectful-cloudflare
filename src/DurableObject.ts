@@ -25,7 +25,7 @@
  * ```
  */
 
-import { Data, Effect, Layer, Schema, ServiceMap } from "effect";
+import { Cause, Data, Effect, Layer, Schema, ServiceMap } from "effect";
 
 // ── Binding types ──────────────────────────────────────────────────────
 
@@ -409,6 +409,9 @@ export class DOClient extends ServiceMap.Service<
         namespace: DONamespaceBinding,
         target: DOTarget
       ) {
+        yield* Effect.logDebug("DOClient.stub").pipe(
+          Effect.annotateLogs({ targetType: target.type })
+        );
         return yield* Effect.try({
           try: () => {
             let id: DurableObjectId;
@@ -448,6 +451,9 @@ export class DOClient extends ServiceMap.Service<
         doStub: DurableObjectStub,
         request: Request
       ) {
+        yield* Effect.logDebug("DOClient.fetch").pipe(
+          Effect.annotateLogs({ url: request.url })
+        );
         return yield* Effect.tryPromise({
           try: () => doStub.fetch(request),
           catch: (cause) =>
@@ -466,6 +472,9 @@ export class DOClient extends ServiceMap.Service<
         request: Request,
         schema?: PureSchema<A>
       ) {
+        yield* Effect.logDebug("DOClient.fetchJson").pipe(
+          Effect.annotateLogs({ url: request.url })
+        );
         const response = yield* fetch(doStub, request);
 
         const text = yield* Effect.tryPromise({
@@ -707,6 +716,9 @@ export interface EffectSqlStorage {
  */
 export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
   const get = Effect.fn("EffectStorage.get")(function* <T>(key: string) {
+    yield* Effect.logDebug("EffectStorage.get").pipe(
+      Effect.annotateLogs({ key })
+    );
     return yield* Effect.tryPromise({
       try: async () => {
         const result = await storage.get<T>(key);
@@ -729,6 +741,9 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
     key: string,
     value: T
   ) {
+    yield* Effect.logDebug("EffectStorage.put").pipe(
+      Effect.annotateLogs({ key })
+    );
     return yield* Effect.tryPromise({
       try: () => storage.put(key, value),
       catch: (cause) =>
@@ -742,6 +757,9 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
   });
 
   const del = Effect.fn("EffectStorage.delete")(function* (key: string) {
+    yield* Effect.logDebug("EffectStorage.delete").pipe(
+      Effect.annotateLogs({ key })
+    );
     return yield* Effect.tryPromise({
       try: async () => {
         const result = await storage.delete(key);
@@ -758,6 +776,7 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
   });
 
   const deleteAll = Effect.fn("EffectStorage.deleteAll")(function* () {
+    yield* Effect.logDebug("EffectStorage.deleteAll");
     return yield* Effect.tryPromise({
       try: () => storage.deleteAll(),
       catch: (cause) =>
@@ -772,6 +791,7 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
   const list = Effect.fn("EffectStorage.list")(function* <T>(
     options?: DOListOptions
   ) {
+    yield* Effect.logDebug("EffectStorage.list");
     return yield* Effect.tryPromise({
       try: () => storage.list<T>(options),
       catch: (cause) =>
@@ -784,6 +804,7 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
   });
 
   const getAlarm = Effect.fn("EffectStorage.getAlarm")(function* () {
+    yield* Effect.logDebug("EffectStorage.getAlarm");
     return yield* Effect.tryPromise({
       try: () => storage.getAlarm(),
       catch: (cause) =>
@@ -798,6 +819,9 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
   const setAlarm = Effect.fn("EffectStorage.setAlarm")(function* (
     scheduledTime: number | Date
   ) {
+    yield* Effect.logDebug("EffectStorage.setAlarm").pipe(
+      Effect.annotateLogs({ scheduledTime: String(scheduledTime) })
+    );
     return yield* Effect.tryPromise({
       try: () => storage.setAlarm(scheduledTime),
       catch: (cause) =>
@@ -810,6 +834,7 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
   });
 
   const deleteAlarm = Effect.fn("EffectStorage.deleteAlarm")(function* () {
+    yield* Effect.logDebug("EffectStorage.deleteAlarm");
     return yield* Effect.tryPromise({
       try: () => storage.deleteAlarm(),
       catch: (cause) =>
@@ -824,6 +849,7 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
   const transaction = Effect.fn("EffectStorage.transaction")(function* <A, E>(
     fn: (txn: EffectStorage) => Effect.Effect<A, E>
   ) {
+    yield* Effect.logDebug("EffectStorage.transaction");
     return yield* Effect.tryPromise({
       try: () =>
         storage.transaction(async (txn) => {
@@ -848,6 +874,9 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
     sql: string,
     ...params: readonly unknown[]
   ) {
+    yield* Effect.logDebug("EffectSqlStorage.exec").pipe(
+      Effect.annotateLogs({ sql: sql.slice(0, 200) })
+    );
     return yield* Effect.try({
       try: () => {
         if (!storage.sql) {
@@ -869,6 +898,9 @@ export const makeStorage = (storage: DOStorageBinding): EffectStorage => {
     sql: string,
     ...params: readonly unknown[]
   ) {
+    yield* Effect.logDebug("EffectSqlStorage.execOne").pipe(
+      Effect.annotateLogs({ sql: sql.slice(0, 200) })
+    );
     return yield* Effect.try({
       try: () => {
         if (!storage.sql) {
@@ -1204,22 +1236,30 @@ export abstract class EffectDurableObject<Env = unknown> {
 
   /**
    * Internal bridge for Cloudflare runtime: fetch handler.
-   * Converts Effect to Promise and catches all errors.
+   * Converts Effect to Promise and catches all errors with Effect logging.
    * @internal
    */
   async _fetch(request: Request): Promise<Response> {
-    try {
-      const effect = this.fetch(request);
-      return await Effect.runPromise(effect);
-    } catch (error) {
-      console.error("Durable Object fetch error:", error);
-      return new Response("Internal Server Error", { status: 500 });
-    }
+    const effect = this.fetch(request).pipe(
+      Effect.catchCause((cause) =>
+        Effect.gen(function* () {
+          yield* Effect.logError("Durable Object fetch error").pipe(
+            Effect.annotateLogs({
+              service: "effectful-cloudflare/DurableObject",
+              operation: "fetch",
+              cause: Cause.pretty(cause),
+            })
+          );
+          return new Response("Internal Server Error", { status: 500 });
+        })
+      )
+    );
+    return await Effect.runPromise(effect);
   }
 
   /**
    * Internal bridge for Cloudflare runtime: alarm handler.
-   * Converts Effect to Promise and silently catches errors.
+   * Converts Effect to Promise and logs errors via Effect logging.
    * @internal
    */
   async _alarm(): Promise<void> {
@@ -1227,12 +1267,18 @@ export abstract class EffectDurableObject<Env = unknown> {
       return;
     }
 
-    try {
-      const effect = this.alarm();
-      await Effect.runPromise(effect);
-    } catch (error) {
-      console.error("Durable Object alarm error:", error);
-    }
+    const effect = this.alarm().pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("Durable Object alarm error").pipe(
+          Effect.annotateLogs({
+            service: "effectful-cloudflare/DurableObject",
+            operation: "alarm",
+            cause: Cause.pretty(cause),
+          })
+        )
+      )
+    );
+    await Effect.runPromise(effect);
   }
 
   /**
@@ -1247,12 +1293,18 @@ export abstract class EffectDurableObject<Env = unknown> {
       return;
     }
 
-    try {
-      const effect = this.webSocketMessage(ws, message);
-      await Effect.runPromise(effect);
-    } catch (error) {
-      console.error("Durable Object WebSocket message error:", error);
-    }
+    const effect = this.webSocketMessage(ws, message).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("Durable Object WebSocket message error").pipe(
+          Effect.annotateLogs({
+            service: "effectful-cloudflare/DurableObject",
+            operation: "webSocketMessage",
+            cause: Cause.pretty(cause),
+          })
+        )
+      )
+    );
+    await Effect.runPromise(effect);
   }
 
   /**
@@ -1269,12 +1321,18 @@ export abstract class EffectDurableObject<Env = unknown> {
       return;
     }
 
-    try {
-      const effect = this.webSocketClose(ws, code, reason, wasClean);
-      await Effect.runPromise(effect);
-    } catch (error) {
-      console.error("Durable Object WebSocket close error:", error);
-    }
+    const effect = this.webSocketClose(ws, code, reason, wasClean).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("Durable Object WebSocket close error").pipe(
+          Effect.annotateLogs({
+            service: "effectful-cloudflare/DurableObject",
+            operation: "webSocketClose",
+            cause: Cause.pretty(cause),
+          })
+        )
+      )
+    );
+    await Effect.runPromise(effect);
   }
 
   /**
@@ -1286,11 +1344,17 @@ export abstract class EffectDurableObject<Env = unknown> {
       return;
     }
 
-    try {
-      const effect = this.webSocketError(ws, error);
-      await Effect.runPromise(effect);
-    } catch (err) {
-      console.error("Durable Object WebSocket error handler error:", err);
-    }
+    const effect = this.webSocketError(ws, error).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logError("Durable Object WebSocket error handler error").pipe(
+          Effect.annotateLogs({
+            service: "effectful-cloudflare/DurableObject",
+            operation: "webSocketError",
+            cause: Cause.pretty(cause),
+          })
+        )
+      )
+    );
+    await Effect.runPromise(effect);
   }
 }

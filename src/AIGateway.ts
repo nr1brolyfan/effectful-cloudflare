@@ -376,6 +376,7 @@ export class AIGateway extends ServiceMap.Service<
     const run = Effect.fn("AIGateway.run")(function* (
       request: AIGatewayRequest
     ) {
+      yield* Effect.logDebug("AIGateway.run");
       const response = yield* Effect.tryPromise({
         try: () => binding.run(request),
         catch: (cause) =>
@@ -409,6 +410,9 @@ export class AIGateway extends ServiceMap.Service<
     const runBatch = Effect.fn("AIGateway.runBatch")(function* (
       requests: readonly AIGatewayRequest[]
     ) {
+      yield* Effect.logDebug("AIGateway.runBatch").pipe(
+        Effect.annotateLogs({ requestCount: requests.length })
+      );
       const response = yield* Effect.tryPromise({
         try: () => binding.run(requests),
         catch: (cause) =>
@@ -440,6 +444,9 @@ export class AIGateway extends ServiceMap.Service<
     });
 
     const getLog = Effect.fn("AIGateway.getLog")(function* (logId: string) {
+      yield* Effect.logDebug("AIGateway.getLog").pipe(
+        Effect.annotateLogs({ logId })
+      );
       return yield* Effect.tryPromise({
         try: () => binding.getLog(logId),
         catch: (cause) =>
@@ -455,6 +462,9 @@ export class AIGateway extends ServiceMap.Service<
       logId: string,
       options: { metadata?: Record<string, unknown>; score?: number }
     ) {
+      yield* Effect.logDebug("AIGateway.patchLog").pipe(
+        Effect.annotateLogs({ logId })
+      );
       return yield* Effect.tryPromise({
         try: () => binding.patchLog(logId, options),
         catch: (cause) =>
@@ -467,6 +477,9 @@ export class AIGateway extends ServiceMap.Service<
     });
 
     const getUrl = Effect.fn("AIGateway.getUrl")(function* (provider?: string) {
+      yield* Effect.logDebug("AIGateway.getUrl").pipe(
+        Effect.annotateLogs({ ...(provider !== undefined && { provider }) })
+      );
       return yield* Effect.tryPromise({
         try: () => binding.getUrl(provider),
         catch: (cause) =>

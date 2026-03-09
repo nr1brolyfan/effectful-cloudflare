@@ -289,6 +289,14 @@ export class KV extends ServiceMap.Service<
         key: string,
         options?: KVGetOptions
       ) {
+        yield* Effect.logDebug("KV.get").pipe(
+          Effect.annotateLogs({
+            key,
+            ...(options?.cacheTtl !== undefined && {
+              cacheTtl: options.cacheTtl,
+            }),
+          })
+        );
         const raw = yield* Effect.tryPromise({
           try: () =>
             binding.get(key, {
@@ -311,6 +319,9 @@ export class KV extends ServiceMap.Service<
         key: string,
         options?: KVGetOptions
       ) {
+        yield* Effect.logDebug("KV.getOrFail").pipe(
+          Effect.annotateLogs({ key })
+        );
         const value = yield* get(key, options);
         if (value === null) {
           return yield* Effect.fail(
@@ -326,6 +337,9 @@ export class KV extends ServiceMap.Service<
       const getWithMetadata = Effect.fn("KV.getWithMetadata")(function* <
         M = unknown,
       >(key: string, options?: KVGetOptions) {
+        yield* Effect.logDebug("KV.getWithMetadata").pipe(
+          Effect.annotateLogs({ key })
+        );
         const result = yield* Effect.tryPromise({
           try: () =>
             binding.getWithMetadata<M>(key, {
@@ -361,6 +375,14 @@ export class KV extends ServiceMap.Service<
         value: unknown,
         options?: KVPutOptions
       ) {
+        yield* Effect.logDebug("KV.put").pipe(
+          Effect.annotateLogs({
+            key,
+            ...(options?.expirationTtl !== undefined && {
+              expirationTtl: options.expirationTtl,
+            }),
+          })
+        );
         const json = yield* serialize(value, key);
         return yield* Effect.tryPromise({
           try: () => binding.put(key, json, options),
@@ -369,6 +391,7 @@ export class KV extends ServiceMap.Service<
       });
 
       const del = Effect.fn("KV.delete")(function* (key: string) {
+        yield* Effect.logDebug("KV.delete").pipe(Effect.annotateLogs({ key }));
         return yield* Effect.tryPromise({
           try: () => binding.delete(key),
           catch: (cause) => new KVError({ operation: "delete", key, cause }),
@@ -376,6 +399,12 @@ export class KV extends ServiceMap.Service<
       });
 
       const list = Effect.fn("KV.list")(function* (options?: KVListOptions) {
+        yield* Effect.logDebug("KV.list").pipe(
+          Effect.annotateLogs({
+            ...(options?.prefix !== undefined && { prefix: options.prefix }),
+            ...(options?.limit !== undefined && { limit: options.limit }),
+          })
+        );
         return yield* Effect.tryPromise({
           try: () => binding.list(options),
           catch: (cause) => new KVError({ operation: "list", cause }),

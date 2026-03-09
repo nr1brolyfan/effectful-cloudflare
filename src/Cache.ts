@@ -180,6 +180,11 @@ export class Cache extends ServiceMap.Service<
         request: Request | string,
         options?: CacheQueryOptions
       ) {
+        yield* Effect.logDebug("Cache.match").pipe(
+          Effect.annotateLogs({
+            url: typeof request === "string" ? request : request.url,
+          })
+        );
         return yield* Effect.tryPromise({
           try: async () => {
             const response = await binding.match(request, options);
@@ -199,6 +204,11 @@ export class Cache extends ServiceMap.Service<
         request: Request | string,
         options?: CacheQueryOptions
       ) {
+        yield* Effect.logDebug("Cache.matchOrFail").pipe(
+          Effect.annotateLogs({
+            url: typeof request === "string" ? request : request.url,
+          })
+        );
         const response = yield* match(request, options);
         if (response === null) {
           const url = typeof request === "string" ? request : request.url;
@@ -216,6 +226,11 @@ export class Cache extends ServiceMap.Service<
         request: Request | string,
         response: Response
       ) {
+        yield* Effect.logDebug("Cache.put").pipe(
+          Effect.annotateLogs({
+            url: typeof request === "string" ? request : request.url,
+          })
+        );
         return yield* Effect.tryPromise({
           try: () => binding.put(request, response),
           catch: (cause) =>
@@ -231,6 +246,11 @@ export class Cache extends ServiceMap.Service<
         request: Request | string,
         options?: CacheQueryOptions
       ) {
+        yield* Effect.logDebug("Cache.delete").pipe(
+          Effect.annotateLogs({
+            url: typeof request === "string" ? request : request.url,
+          })
+        );
         return yield* Effect.tryPromise({
           try: () => binding.delete(request, options),
           catch: (cause) =>

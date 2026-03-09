@@ -178,26 +178,34 @@ export class Pipeline extends ServiceMap.Service<
   ) {
     // send - Send single event or batch to pipeline
     const send = (data: object | readonly object[]) =>
-      Effect.tryPromise({
-        try: () => binding.send(data),
-        catch: (cause) =>
-          new PipelineError({
-            operation: "send",
-            message: "Failed to send events to pipeline",
-            cause,
-          }),
+      Effect.gen(function* () {
+        yield* Effect.logDebug("Pipeline.send");
+        return yield* Effect.tryPromise({
+          try: () => binding.send(data),
+          catch: (cause) =>
+            new PipelineError({
+              operation: "send",
+              message: "Failed to send events to pipeline",
+              cause,
+            }),
+        });
       }).pipe(Effect.withSpan("Pipeline.send"));
 
     // sendBatch - Convenience method for sending array of events
     const sendBatch = (events: readonly object[]) =>
-      Effect.tryPromise({
-        try: () => binding.send(events),
-        catch: (cause) =>
-          new PipelineError({
-            operation: "sendBatch",
-            message: `Failed to send batch of ${events.length} events to pipeline`,
-            cause,
-          }),
+      Effect.gen(function* () {
+        yield* Effect.logDebug("Pipeline.sendBatch").pipe(
+          Effect.annotateLogs({ eventCount: events.length })
+        );
+        return yield* Effect.tryPromise({
+          try: () => binding.send(events),
+          catch: (cause) =>
+            new PipelineError({
+              operation: "sendBatch",
+              message: `Failed to send batch of ${events.length} events to pipeline`,
+              cause,
+            }),
+        });
       }).pipe(Effect.withSpan("Pipeline.sendBatch"));
 
     return Pipeline.of({

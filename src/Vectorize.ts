@@ -303,6 +303,9 @@ export class Vectorize extends ServiceMap.Service<
     const insert = Effect.fn("Vectorize.insert")(function* (
       vectors: readonly VectorizeVector[]
     ) {
+      yield* Effect.logDebug("Vectorize.insert").pipe(
+        Effect.annotateLogs({ vectorCount: vectors.length })
+      );
       const result = yield* wrapOperation("insert", () =>
         binding.insert(vectors)
       );
@@ -314,6 +317,9 @@ export class Vectorize extends ServiceMap.Service<
     const upsert = Effect.fn("Vectorize.upsert")(function* (
       vectors: readonly VectorizeVector[]
     ) {
+      yield* Effect.logDebug("Vectorize.upsert").pipe(
+        Effect.annotateLogs({ vectorCount: vectors.length })
+      );
       const result = yield* wrapOperation("upsert", () =>
         binding.upsert(vectors)
       );
@@ -326,6 +332,11 @@ export class Vectorize extends ServiceMap.Service<
       vector: VectorFloatArray | number[],
       options?: VectorizeQueryOptions
     ) {
+      yield* Effect.logDebug("Vectorize.query").pipe(
+        Effect.annotateLogs({
+          ...(options?.topK !== undefined && { topK: options.topK }),
+        })
+      );
       const result = yield* wrapOperation("query", () =>
         binding.query(vector, options)
       );
@@ -338,12 +349,18 @@ export class Vectorize extends ServiceMap.Service<
     const getByIds = Effect.fn("Vectorize.getByIds")(function* (
       ids: readonly string[]
     ) {
+      yield* Effect.logDebug("Vectorize.getByIds").pipe(
+        Effect.annotateLogs({ idCount: ids.length })
+      );
       return yield* wrapOperation("getByIds", () => binding.getByIds(ids));
     });
 
     const deleteByIds = Effect.fn("Vectorize.deleteByIds")(function* (
       ids: readonly string[]
     ) {
+      yield* Effect.logDebug("Vectorize.deleteByIds").pipe(
+        Effect.annotateLogs({ idCount: ids.length })
+      );
       const result = yield* wrapOperation("deleteByIds", () =>
         binding.deleteByIds(ids)
       );
@@ -353,6 +370,7 @@ export class Vectorize extends ServiceMap.Service<
     });
 
     const describe = Effect.fn("Vectorize.describe")(function* () {
+      yield* Effect.logDebug("Vectorize.describe");
       const result = yield* wrapOperation("describe", () => binding.describe());
       return {
         dimensions: result.config.dimensions,

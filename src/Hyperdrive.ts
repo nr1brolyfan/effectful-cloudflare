@@ -162,29 +162,35 @@ export class Hyperdrive extends ServiceMap.Service<
     binding: HyperdriveBinding
   ) {
     // connectionString getter - synchronous read from binding
-    const connectionString = Effect.try({
-      try: () => binding.connectionString,
-      catch: (cause) =>
-        new HyperdriveError({
-          operation: "connectionString",
-          message: "Failed to read connection string from binding",
-          cause,
-        }),
+    const connectionString = Effect.gen(function* () {
+      yield* Effect.logDebug("Hyperdrive.connectionString");
+      return yield* Effect.try({
+        try: () => binding.connectionString,
+        catch: (cause) =>
+          new HyperdriveError({
+            operation: "connectionString",
+            message: "Failed to read connection string from binding",
+            cause,
+          }),
+      });
     }).pipe(Effect.withSpan("Hyperdrive.connectionString"));
 
     // connectionInfo getter - synchronous read of connection details
-    const connectionInfo = Effect.try({
-      try: () => ({
-        host: binding.host,
-        port: binding.port,
-        database: binding.database,
-      }),
-      catch: (cause) =>
-        new HyperdriveError({
-          operation: "connectionInfo",
-          message: "Failed to read connection info from binding",
-          cause,
+    const connectionInfo = Effect.gen(function* () {
+      yield* Effect.logDebug("Hyperdrive.connectionInfo");
+      return yield* Effect.try({
+        try: () => ({
+          host: binding.host,
+          port: binding.port,
+          database: binding.database,
         }),
+        catch: (cause) =>
+          new HyperdriveError({
+            operation: "connectionInfo",
+            message: "Failed to read connection info from binding",
+            cause,
+          }),
+      });
     }).pipe(Effect.withSpan("Hyperdrive.connectionInfo"));
 
     return Hyperdrive.of({

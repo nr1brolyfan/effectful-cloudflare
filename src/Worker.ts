@@ -178,10 +178,14 @@ export const serve = <E, R>(
         Effect.provide(layer),
         Effect.catchCause((cause) =>
           Effect.gen(function* () {
-            yield* Effect.logError("Unhandled error in Worker.serve handler");
-            console.error(
-              "[effectful-cloudflare] Unhandled worker error:",
-              Cause.pretty(cause)
+            yield* Effect.logError(
+              "Unhandled error in Worker.serve handler"
+            ).pipe(
+              Effect.annotateLogs({
+                service: "effectful-cloudflare/Worker",
+                operation: "serve",
+                cause: Cause.pretty(cause),
+              })
             );
             return new Response(
               JSON.stringify({ error: "Internal Server Error" }),
