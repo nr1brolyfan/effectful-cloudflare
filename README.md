@@ -2,7 +2,7 @@
 
 Type-safe Effect v4 bindings for Cloudflare Workers platform services.
 
-**Status:** Alpha.
+> **⚠️ Warning:** This library is in **alpha** and depends on Effect v4 (currently in beta). The API may change before reaching stable 1.0.0. Effect v4 APIs are not yet finalized and breaking changes are possible.
 
 ## Features
 
@@ -24,6 +24,15 @@ bun add effectful-cloudflare
 ```
 
 **Peer dependency:** `effect: ^4.0.0-beta`
+
+## Bundle Size
+
+- **Full package:** 67 KB (npm tarball)
+- **Runtime usage:** ~3-10 KB gzipped (depending on imports)
+- **Tree-shakeable:** Import only what you need via subpath exports
+
+Example: `import { KV } from "effectful-cloudflare/KV"` adds only ~3 KB gzipped to your bundle.  
+The `Testing` module (7.5 KB) is separate and only imported when explicitly needed for tests.
 
 ## Quick Start
 
