@@ -1,6 +1,6 @@
 {
   "name": "effectful-cloudflare",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "description": "Type-safe Effect v4 bindings for Cloudflare Workers platform services",
   "keywords": [
     "effect",
