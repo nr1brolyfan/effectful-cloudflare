@@ -174,8 +174,13 @@ export interface KVListResult {
 
 // ── Schema constraint ──────────────────────────────────────────────────
 
-/** A Schema that requires no external services for encoding/decoding. */
-type PureSchema<A> = Schema.Schema<A> & {
+/**
+ * Internal type used for casting schemas to satisfy `encodeSync`/`decodeUnknownSync`
+ * constraints. These Sync functions require `{ DecodingServices: never }` and
+ * `{ EncodingServices: never }`, but the public API accepts `Schema.Schema<A>`
+ * for ergonomics — users should not need to express the service constraint.
+ */
+type SyncSchema = Schema.Top & {
   readonly DecodingServices: never;
   readonly EncodingServices: never;
 };
@@ -266,11 +271,18 @@ export class KV extends ServiceMap.Service<
    * yield* kv.put("user:1", { id: "1", name: "Alice" })  // typechecked
    * ```
    */
-  static make<A = unknown>(binding: KVBinding, schema?: PureSchema<A>) {
+  static make<A = unknown>(binding: KVBinding, schema?: Schema.Schema<A>) {
     return Effect.gen(function* () {
       // ── Serialization helpers ──────────────────────────────────────
-      const encode = schema ? Schema.encodeSync(schema) : undefined;
-      const decode = schema ? Schema.decodeUnknownSync(schema) : undefined;
+      // Cast to SyncSchema for encodeSync/decodeUnknownSync which require
+      // { DecodingServices: never; EncodingServices: never }. This is safe
+      // because KV schemas should always be pure (no external service deps).
+      const encode = schema
+        ? Schema.encodeSync(schema as unknown as SyncSchema)
+        : undefined;
+      const decode = schema
+        ? Schema.decodeUnknownSync(schema as unknown as SyncSchema)
+        : undefined;
 
       const serialize = (value: unknown, key: string) =>
         Effect.gen(function* () {
@@ -525,9 +537,12 @@ export class KV extends ServiceMap.Service<
    * }).pipe(Effect.provide(layer))
    * ```
    */
-  static layer<A>(binding: KVBinding, schema: PureSchema<A>): Layer.Layer<KV>;
+  static layer<A>(
+    binding: KVBinding,
+    schema: Schema.Schema<A>
+  ): Layer.Layer<KV>;
 
-  static layer<A>(binding: KVBinding, schema?: PureSchema<A>) {
+  static layer<A>(binding: KVBinding, schema?: Schema.Schema<A>) {
     return schema
       ? Layer.effect(KV, KV.make(binding, schema))
       : Layer.effect(KV, KV.make(binding));

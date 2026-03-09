@@ -63,6 +63,8 @@ import type {
 import type {
   VectorFloatArray,
   VectorizeBinding,
+  VectorizeFilterOp,
+  VectorizeFilterValue,
   VectorizeIndexDetails,
   VectorizeMatches,
   VectorizeQueryOptions,
@@ -1721,6 +1723,71 @@ export const memoryVectorize = (options?: {
     });
   };
 
+  // Helper: check if a filter value is an operator object
+  const isFilterOp = (
+    value: VectorizeFilterValue | VectorizeFilterOp
+  ): value is VectorizeFilterOp =>
+    typeof value === "object" && value !== null && !Array.isArray(value);
+
+  // Helper: check a single comparison operator
+  const checkNumericOp = (
+    metaValue: VectorizeVectorMetadata | undefined,
+    opValue: VectorizeFilterValue | undefined,
+    compare: (a: number, b: number) => boolean
+  ): boolean => {
+    if (opValue === undefined) {
+      return true;
+    }
+    if (typeof metaValue !== "number") {
+      return false;
+    }
+    return compare(metaValue, opValue as number);
+  };
+
+  // Helper: match metadata value against operator object
+  const matchesOps = (
+    metaValue: VectorizeVectorMetadata | undefined,
+    ops: VectorizeFilterOp
+  ): boolean => {
+    if (ops.$eq !== undefined && metaValue !== ops.$eq) {
+      return false;
+    }
+    if (ops.$ne !== undefined && metaValue === ops.$ne) {
+      return false;
+    }
+    if (!checkNumericOp(metaValue, ops.$lt, (a, b) => a < b)) {
+      return false;
+    }
+    if (!checkNumericOp(metaValue, ops.$lte, (a, b) => a <= b)) {
+      return false;
+    }
+    if (!checkNumericOp(metaValue, ops.$gt, (a, b) => a > b)) {
+      return false;
+    }
+    if (!checkNumericOp(metaValue, ops.$gte, (a, b) => a >= b)) {
+      return false;
+    }
+    if (ops.$in && !ops.$in.includes(metaValue as VectorizeFilterValue)) {
+      return false;
+    }
+    if (ops.$nin?.includes(metaValue as VectorizeFilterValue)) {
+      return false;
+    }
+    return true;
+  };
+
+  // Helper: match a metadata value against a filter (supports operators)
+  const matchesFilter = (
+    metaValue: VectorizeVectorMetadata | undefined,
+    filterValue: VectorizeFilterValue | VectorizeFilterOp
+  ): boolean => {
+    if (!isFilterOp(filterValue)) {
+      // Simple equality shorthand
+      return metaValue === filterValue;
+    }
+    return matchesOps(metaValue, filterValue);
+  };
+
   const query = (
     vector: VectorFloatArray | number[],
     queryOptions?: VectorizeQueryOptions
@@ -1738,14 +1805,15 @@ export const memoryVectorize = (options?: {
       candidates = candidates.filter((v) => v.namespace === namespace);
     }
 
-    // Filter by metadata (simple equality check)
+    // Filter by metadata (supports both simple equality and operator syntax)
     if (filter) {
       candidates = candidates.filter((v) => {
         if (!v.metadata) {
           return false;
         }
-        for (const [key, value] of Object.entries(filter)) {
-          if (v.metadata[key] !== value) {
+        for (const [key, filterValue] of Object.entries(filter)) {
+          const metaValue = v.metadata[key];
+          if (!matchesFilter(metaValue, filterValue)) {
             return false;
           }
         }

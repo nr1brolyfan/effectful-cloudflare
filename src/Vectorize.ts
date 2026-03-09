@@ -70,6 +70,68 @@ export type VectorizeVectorMetadata =
   | boolean
   | readonly string[];
 
+// ── Filter types ──────────────────────────────────────────────────────
+
+/**
+ * Primitive value types supported in Vectorize metadata filters.
+ * Includes `null` for filtering on absent metadata fields.
+ */
+export type VectorizeFilterValue = string | number | boolean | null;
+
+/**
+ * Filter operator expressions for Vectorize metadata queries.
+ *
+ * Supports the full Cloudflare Vectorize filter syntax:
+ * - `$eq` / `$ne` — equality / inequality
+ * - `$lt` / `$lte` / `$gt` / `$gte` — numeric comparisons
+ * - `$in` / `$nin` — set membership
+ *
+ * @example
+ * ```ts
+ * // Filter vectors where "category" equals "tech" and "score" > 0.5
+ * const filter: VectorizeMetadataFilter = {
+ *   category: { $eq: "tech" },
+ *   score: { $gt: 0.5 },
+ *   status: { $in: ["active", "pending"] }
+ * }
+ * ```
+ */
+export interface VectorizeFilterOp {
+  readonly $eq?: VectorizeFilterValue;
+  readonly $gt?: VectorizeFilterValue;
+  readonly $gte?: VectorizeFilterValue;
+  readonly $in?: readonly VectorizeFilterValue[];
+  readonly $lt?: VectorizeFilterValue;
+  readonly $lte?: VectorizeFilterValue;
+  readonly $ne?: VectorizeFilterValue;
+  readonly $nin?: readonly VectorizeFilterValue[];
+}
+
+/**
+ * Full metadata filter type for Vectorize queries.
+ *
+ * Each key is a metadata field name. Values can be either:
+ * - A direct value (shorthand for `{ $eq: value }`)
+ * - An operator expression (e.g., `{ $gt: 5, $lt: 10 }`)
+ *
+ * @example
+ * ```ts
+ * // Simple equality filter (shorthand)
+ * const filter: VectorizeMetadataFilter = { category: "tech", published: true }
+ *
+ * // Full operator syntax
+ * const filter: VectorizeMetadataFilter = {
+ *   category: { $eq: "tech" },
+ *   score: { $gte: 0.8 },
+ *   tags: { $in: ["ml", "ai"] }
+ * }
+ * ```
+ */
+export type VectorizeMetadataFilter = Record<
+  string,
+  VectorizeFilterValue | VectorizeFilterOp
+>;
+
 /**
  * Represents a single vector value set along with its associated metadata.
  */
@@ -88,8 +150,16 @@ export interface VectorizeVector {
  * Options for vector similarity search.
  */
 export interface VectorizeQueryOptions {
-  /** Filter by metadata. */
-  readonly filter?: Record<string, VectorizeVectorMetadata>;
+  /**
+   * Filter by metadata.
+   *
+   * Supports both simple equality (shorthand) and full operator syntax:
+   * - Simple: `{ category: "tech" }` — equivalent to `{ $eq: "tech" }`
+   * - Operators: `{ score: { $gt: 0.5 }, tags: { $in: ["ml", "ai"] } }`
+   *
+   * @see VectorizeMetadataFilter for the full filter type.
+   */
+  readonly filter?: VectorizeMetadataFilter;
   /** The namespace to query within. */
   readonly namespace?: string;
   /** Return the metadata in the response. Default: false */
@@ -128,14 +198,18 @@ export interface VectorizeMatches {
 
 /**
  * Result of a mutation operation (insert, upsert, delete).
+ *
+ * Compatible with both Cloudflare's legacy `VectorizeVectorMutation`
+ * (`{ ids, count }`) and the new `VectorizeAsyncMutation` (`{ mutationId }`).
+ * All fields are optional to accept either shape from the binding.
  */
 export interface VectorizeVectorMutation {
-  /** Number of vectors that were mutated. */
+  /** Number of vectors that were mutated (legacy VectorizeIndex). */
   readonly count?: number;
-  /** IDs of vectors that were mutated. */
+  /** IDs of vectors that were mutated (legacy VectorizeIndex). */
   readonly ids?: readonly string[];
-  /** The unique identifier for the mutation operation. */
-  readonly mutationId: string;
+  /** The unique identifier for the async mutation operation (new Vectorize class). */
+  readonly mutationId?: string;
 }
 
 /**
@@ -174,8 +248,16 @@ export interface VectorizeQueryResult {
 
 /**
  * Simplified result type for mutation operations.
+ *
+ * Contains the mutation ID (if available from the binding) and optional
+ * count/ids from legacy `VectorizeIndex` bindings.
  */
 export interface VectorizeMutationResult {
+  /** Number of vectors that were mutated (if reported by the binding). */
+  readonly count?: number;
+  /** IDs of vectors that were mutated (if reported by the binding). */
+  readonly ids?: readonly string[];
+  /** Mutation ID from the async mutation (new Vectorize class), or "unknown" if not available. */
   readonly mutationId: string;
 }
 
@@ -299,6 +381,8 @@ export class Vectorize extends ServiceMap.Service<
       );
       return {
         mutationId: result.mutationId ?? "unknown",
+        ...(result.count !== undefined && { count: result.count }),
+        ...(result.ids !== undefined && { ids: result.ids }),
       };
     });
 
@@ -315,6 +399,8 @@ export class Vectorize extends ServiceMap.Service<
       );
       return {
         mutationId: result.mutationId ?? "unknown",
+        ...(result.count !== undefined && { count: result.count }),
+        ...(result.ids !== undefined && { ids: result.ids }),
       };
     });
 
@@ -364,6 +450,8 @@ export class Vectorize extends ServiceMap.Service<
       );
       return {
         mutationId: result.mutationId ?? "unknown",
+        ...(result.count !== undefined && { count: result.count }),
+        ...(result.ids !== undefined && { ids: result.ids }),
       };
     });
 

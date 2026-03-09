@@ -339,10 +339,45 @@ export class WebSocketError extends Data.TaggedError("WebSocketError")<{
   readonly cause?: unknown;
 }> {}
 
+/**
+ * Union of all Durable Object error types.
+ *
+ * Use this type in your `fetch`, `alarm`, and WebSocket handler signatures
+ * instead of `DOError` alone. This eliminates the need for manual `mapError`
+ * when using `this.storage` methods (which produce `StorageError | AlarmError`)
+ * or `this.acceptWebSocket` / `this.getWebSockets` (which produce `WebSocketError`).
+ *
+ * The internal bridge methods (`_fetch`, `_alarm`, etc.) use `Effect.catchAllCause`
+ * which catches any error, so widening the error type is safe at runtime.
+ *
+ * @example
+ * ```ts
+ * export class MyDO extends EffectDurableObject {
+ *   fetch(request: Request): Effect.Effect<Response, DurableObjectError> {
+ *     return Effect.gen(this, function* (self) {
+ *       // No mapError needed — StorageError is in the union
+ *       const data = yield* self.storage.get<string>("key")
+ *       return new Response(data ?? "not found")
+ *     })
+ *   }
+ * }
+ * ```
+ */
+export type DurableObjectError =
+  | DOError
+  | StorageError
+  | AlarmError
+  | SqlError
+  | WebSocketError;
+
 // ── Schema constraint ──────────────────────────────────────────────────
 
-/** A Schema that requires no external services for encoding/decoding. */
-type PureSchema<A> = Schema.Schema<A> & {
+/**
+ * Internal type used for casting schemas to satisfy `decodeUnknownSync`
+ * constraints. The Sync functions require `{ DecodingServices: never }`,
+ * but the public API accepts `Schema.Schema<A>` for ergonomics.
+ */
+type SyncSchema = Schema.Top & {
   readonly DecodingServices: never;
   readonly EncodingServices: never;
 };
@@ -384,7 +419,7 @@ export class DOClient extends ServiceMap.Service<
     readonly fetchJson: <A = unknown>(
       stub: DurableObjectStub,
       request: Request,
-      schema?: PureSchema<A>
+      schema?: Schema.Schema<A>
     ) => Effect.Effect<A, DOError | Errors.SchemaError>;
   }
 >()("effectful-cloudflare/DOClient") {
@@ -471,7 +506,7 @@ export class DOClient extends ServiceMap.Service<
       const fetchJson = Effect.fn("DOClient.fetchJson")(function* <A = unknown>(
         doStub: DurableObjectStub,
         request: Request,
-        schema?: PureSchema<A>
+        schema?: Schema.Schema<A>
       ) {
         yield* Effect.logDebug("DOClient.fetchJson").pipe(
           Effect.annotateLogs({ url: request.url })
@@ -503,7 +538,10 @@ export class DOClient extends ServiceMap.Service<
         }
 
         return yield* Effect.try({
-          try: () => Schema.decodeUnknownSync(schema)(parsed) as A,
+          try: () =>
+            Schema.decodeUnknownSync(schema as unknown as SyncSchema)(
+              parsed
+            ) as A,
           catch: (cause) =>
             new Errors.SchemaError({
               message: "Failed to validate Durable Object fetchJson response",
@@ -1060,7 +1098,7 @@ export abstract class EffectDurableObject<Env = unknown> {
    * }
    * ```
    */
-  abstract fetch(request: Request): Effect.Effect<Response, DOError>;
+  abstract fetch(request: Request): Effect.Effect<Response, DurableObjectError>;
 
   /**
    * Handle scheduled alarms.
@@ -1081,7 +1119,7 @@ export abstract class EffectDurableObject<Env = unknown> {
    * }
    * ```
    */
-  alarm?(): Effect.Effect<void, DOError>;
+  alarm?(): Effect.Effect<void, DurableObjectError>;
 
   /**
    * Handle WebSocket messages.
@@ -1110,7 +1148,7 @@ export abstract class EffectDurableObject<Env = unknown> {
   webSocketMessage?(
     ws: WebSocket,
     message: string | ArrayBuffer
-  ): Effect.Effect<void, DOError>;
+  ): Effect.Effect<void, DurableObjectError>;
 
   /**
    * Handle WebSocket close events.
@@ -1137,7 +1175,7 @@ export abstract class EffectDurableObject<Env = unknown> {
     code: number,
     reason: string,
     wasClean: boolean
-  ): Effect.Effect<void, DOError>;
+  ): Effect.Effect<void, DurableObjectError>;
 
   /**
    * Handle WebSocket errors.
@@ -1157,7 +1195,10 @@ export abstract class EffectDurableObject<Env = unknown> {
    * }
    * ```
    */
-  webSocketError?(ws: WebSocket, error: unknown): Effect.Effect<void, DOError>;
+  webSocketError?(
+    ws: WebSocket,
+    error: unknown
+  ): Effect.Effect<void, DurableObjectError>;
 
   /**
    * Accept a WebSocket connection for hibernation.
