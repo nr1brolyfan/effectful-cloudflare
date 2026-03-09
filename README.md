@@ -2,25 +2,23 @@
 
 Type-safe Effect v4 bindings for Cloudflare Workers platform services.
 
-> **⚠️ Warning:** This library is in **alpha** and depends on Effect v4 (currently in beta). The API may change before reaching stable 1.0.0. Effect v4 APIs are not yet finalized and breaking changes are possible.
+> **Warning:** Alpha release, depends on Effect v4 (beta). API may change before 1.0.0.
 
 ## Features
 
 - **Effect v4 native** — `ServiceMap.Service`, `Effect.fn`, `Schema.TaggedErrorClass`, `LayerMap`
 - **Type-safe bindings** — Structural types for all CF services (KV, D1, R2, Queue, DO, AI, etc.)
-- **Schema-first data** — Built-in JSON serialization + optional schema validation via `Schema`
+- **Schema-first data** — Built-in JSON serialization + optional schema validation
 - **Composable layers** — Single-instance (`Layer`) + multi-instance (`LayerMap`) patterns
 - **Traceable** — All methods use `Effect.fn` for automatic spans and stack traces
 - **Tagged errors** — Precise error types for every operation (serializable + internal)
 - **Test-friendly** — In-memory mocks for all services (`Testing` module)
-- **Zero REST overhead** — Direct binding usage, no network calls where native APIs exist
+- **Zero REST overhead** — Direct binding usage, no network calls
 
 ## Installation
 
 ```bash
 npm install effectful-cloudflare
-# or
-bun add effectful-cloudflare
 ```
 
 **Peer dependency:** `effect: ^4.0.0-beta`
@@ -31,30 +29,23 @@ bun add effectful-cloudflare
 - **Runtime usage:** ~3-10 KB gzipped (depending on imports)
 - **Tree-shakeable:** Import only what you need via subpath exports
 
-Example: `import { KV } from "effectful-cloudflare/KV"` adds only ~3 KB gzipped to your bundle.  
-The `Testing` module (7.5 KB) is separate and only imported when explicitly needed for tests.
+Example: `import { KV } from "effectful-cloudflare/KV"` adds ~3 KB gzipped.
+The `Testing` module (7.5 KB) is only imported when explicitly needed.
 
 ## Quick Start
 
 ```ts
 import { Effect, Layer } from "effect"
 import { KV } from "effectful-cloudflare/KV"
-import { Worker } from "effectful-cloudflare/Worker"
+import { serve } from "effectful-cloudflare/Worker"
 
-// Define your worker handler
 const handler = (request: Request) => Effect.gen(function*() {
-  // Access KV service from context
   const kv = yield* KV
-  
-  // Get value (auto-JSON parsed)
   const user = yield* kv.get("user:123")
-  
-  // Return Response
   return new Response(JSON.stringify(user))
 })
 
-// Export CF Worker handler
-export default Worker.serve(handler, (env) => KV.layer(env.MY_KV))
+export default serve(handler, (env) => KV.layer(env.MY_KV))
 ```
 
 ## Module Catalog
@@ -81,7 +72,7 @@ export default Worker.serve(handler, (env) => KV.layer(env.MY_KV))
 
 ### Service Pattern
 
-Every service can be used in **two ways**:
+Every service can be used in two ways:
 
 #### 1. Factory Pattern (direct usage, no DI)
 
@@ -91,11 +82,13 @@ Create the service directly from the binding and use it immediately:
 import { KV } from "effectful-cloudflare/KV"
 
 const program = Effect.gen(function*() {
-  // Create service from binding and use it directly
   const kv = yield* KV.make(env.MY_KV)
   const value = yield* kv.get("key")
   yield* kv.put("key", { data: "value" })
 })
+
+// With schema validation:
+const kv = yield* KV.make(env.MY_KV, UserSchema)
 ```
 
 **Use when:** You need the service in a single place and don't need dependency injection.
@@ -107,10 +100,8 @@ Provide the service as a Layer and access it from the Effect context:
 ```ts
 import { KV } from "effectful-cloudflare/KV"
 
-// Create Layer from binding
 const kvLayer = KV.layer(env.MY_KV)
 
-// Access service from context
 const program = Effect.gen(function*() {
   const kv = yield* KV
   const value = yield* kv.get("key")
@@ -122,124 +113,140 @@ const program = Effect.gen(function*() {
 
 ### Schema Validation
 
-All data services support optional schema validation:
+Schema validation varies by service, applied where it makes the most sense:
+
+#### Construction-time schema (KV, Queue, Cache)
+
+For homogeneous stores where one namespace = one data type:
 
 ```ts
 import { Schema } from "effect"
 import { KV } from "effectful-cloudflare/KV"
 
-// Define schema
 const User = Schema.Struct({
   id: Schema.String,
   name: Schema.String,
   email: Schema.String,
 })
 
-// Create typed KV service
-const kvLayer = KV.layer(env.MY_KV, User)
+// Factory — schema as second argument
+const kv = yield* KV.make(env.MY_KV, User)
+yield* kv.put("user:123", { id: "123", name: "Alice", email: "a@b.com" }) // typechecked
+const user = yield* kv.get("user:123") // User | null
 
-// Get value (auto-validated)
-const program = Effect.gen(function*() {
-  const kv = yield* KV
-  const user = yield* kv.get("user:123") // Type: typeof User.Type | null
-})
+// Layer — same API
+const kvLayer = KV.layer(env.MY_KV, User)
 ```
 
-### Multi-Instance Pattern
-
-**Problem:** Your Worker has **multiple KV namespaces** (e.g., `env.KV_USERS`, `env.KV_CACHE`, `env.KV_SESSIONS`) and you need to use different ones in different parts of your app.
-
-**Solution:** Use `LayerMap` to dynamically resolve which KV namespace to use by name.
-
-#### How it works
-
-`LayerMap` is a **keyed resource pool**. Think of it like a `Map<string, Layer>` that creates layers on-demand:
-
-- **Multiple KV namespaces** = Multiple **Cloudflare KV bindings** in `wrangler.jsonc`:
-  ```jsonc
-  {
-    "kv_namespaces": [
-      { "binding": "KV_USERS", "id": "..." },
-      { "binding": "KV_CACHE", "id": "..." },
-      { "binding": "KV_SESSIONS", "id": "..." }
-    ]
-  }
-  ```
-- Each binding is a **separate KV namespace** (isolated storage)
-- `LayerMap` lets you **pick which one to use** dynamically at runtime
-
-#### Example: Multi-tenant app with isolated KV per tenant
+Queue uses a factory method for schema:
 
 ```ts
-import { Layer, LayerMap } from "effect"
+import { QueueProducer } from "effectful-cloudflare/Queue"
+
+const typedQueue = QueueProducer.json(TaskSchema)
+const layer = typedQueue.layer(env.MY_QUEUE)
+```
+
+#### Per-call schema (D1, AI, DOClient)
+
+For heterogeneous services where each call returns a different type:
+
+```ts
+import { D1 } from "effectful-cloudflare/D1"
+
+const db = yield* D1
+const users = yield* db.querySchema(User, "SELECT * FROM users WHERE active = ?", true)
+const user = yield* db.queryFirstSchema(User, "SELECT * FROM users WHERE id = ?", 123)
+```
+
+```ts
+import { AI } from "effectful-cloudflare/AI"
+
+const ai = yield* AI
+const result = yield* ai.runSchema("@cf/meta/llama-3-8b-instruct", ResponseSchema, { prompt: "..." })
+```
+
+### Multi-Instance Pattern (LayerMap)
+
+**Problem:** Your Worker has multiple KV namespaces (`env.KV_USERS`, `env.KV_CACHE`) and you need to use different ones in different parts of your app.
+
+**Solution:** Use `LayerMap` to dynamically resolve which binding to use by name.
+
+```jsonc
+// wrangler.jsonc
+{
+  "kv_namespaces": [
+    { "binding": "KV_USERS", "id": "..." },
+    { "binding": "KV_CACHE", "id": "..." }
+  ]
+}
+```
+
+The library provides built-in `KVMap`, `D1Map`, `R2Map`, and `QueueProducerMap` LayerMap services. These require `WorkerEnv` to resolve bindings by name:
+
+```ts
+import { Effect, Layer } from "effect"
 import { KV, KVMap } from "effectful-cloudflare/KV"
 import { WorkerEnv } from "effectful-cloudflare/Worker"
 
-// Define your KV namespaces in wrangler.jsonc:
-// kv_namespaces: [
-//   { binding: "KV_USERS", id: "..." },
-//   { binding: "KV_CACHE", id: "..." }
-// ]
+// Provide WorkerEnv + KVMap layers
+const layers = Layer.mergeAll(
+  WorkerEnv.layer(env),
+  KVMap.layer
+)
 
-// Create a LayerMap that looks up KV namespaces by binding name
-class MyKVMap extends LayerMap.Service<MyKVMap>()("app/KVMap", {
-  lookup: (bindingName: string) =>
-    Layer.effect(KV)(
-      Effect.gen(function*() {
-        const env = yield* WorkerEnv
-        // env[bindingName] = env.KV_USERS or env.KV_CACHE
-        return yield* KV.make(env[bindingName])
-      })
-    ),
-  idleTimeToLive: "5 minutes", // Cache the layer for 5 min
-}) {}
-
-// Usage: Access different KV namespaces in the same program
+// Use different KV namespaces dynamically
 const program = Effect.gen(function*() {
-  // Get from KV_USERS namespace
-  const user = yield* KV.use((kv) => kv.get("user:123"))
-    .pipe(Effect.provide(MyKVMap.get("KV_USERS")))
-  
-  // Get from KV_CACHE namespace
-  const cached = yield* KV.use((kv) => kv.get("result:abc"))
-    .pipe(Effect.provide(MyKVMap.get("KV_CACHE")))
-  
-  // Both use the same KV service interface, but different storage backends
-})
+  // Access KV_USERS namespace
+  const usersKV = yield* KV.pipe(Effect.provide(KVMap.get("KV_USERS")))
+  const user = yield* usersKV.get("user:123")
+
+  // Access KV_CACHE namespace
+  const cacheKV = yield* KV.pipe(Effect.provide(KVMap.get("KV_CACHE")))
+  const cached = yield* cacheKV.get("result:abc")
+}).pipe(Effect.provide(layers))
 ```
 
-#### When to use LayerMap
+You can also define a custom LayerMap with your own lookup logic:
 
-✅ **Use LayerMap when:**
-- You have **multiple KV/D1/R2 bindings** with different purposes (users, cache, logs, etc.)
-- You need to **dynamically select** which binding to use based on runtime data (tenant ID, region, etc.)
-- You want to **cache layer construction** (avoid recreating services repeatedly)
+```ts
+class MyKVMap extends LayerMap.Service<MyKVMap>()("app/KVMap", {
+  lookup: (bindingName: string) =>
+    Layer.effect(KV,
+      Effect.gen(function*() {
+        const env = yield* WorkerEnv
+        return yield* KV.make(env[bindingName] as KVBinding)
+      })
+    ),
+  idleTimeToLive: "5 minutes",
+}) {}
+```
 
-❌ **Don't use LayerMap when:**
-- You only have **one binding** per service type → Use simple `KV.layer(env.MY_KV)` instead
-- You want to **partition data within one KV** → Use key prefixes instead (`user:123`, `cache:abc`)
+**Use LayerMap when:** Multiple bindings of the same type with different purposes, or dynamic binding selection at runtime.
+
+**Don't use when:** One binding per service type (use `KV.layer(env.MY_KV)`) or partitioning data within one KV (use key prefixes).
 
 ### Error Handling
 
 All services use tagged errors:
 
 ```ts
-import { Effect, Match } from "effect"
+import { Effect } from "effect"
 import { KV, KVError } from "effectful-cloudflare/KV"
 import { NotFoundError } from "effectful-cloudflare/Errors"
 
 const program = Effect.gen(function*() {
   const kv = yield* KV
-  
+
   // Option 1: getOrFail (fails with NotFoundError)
   const user = yield* kv.getOrFail("user:123")
-  
+
   // Option 2: get + null check
   const maybe = yield* kv.get("user:123")
   if (maybe === null) {
     return yield* new NotFoundError({ resource: "KV", key: "user:123" })
   }
-  
+
   // Option 3: catchTag
   return yield* kv.getOrFail("user:123").pipe(
     Effect.catchTag("NotFoundError", () => Effect.succeed({ default: "user" }))
@@ -257,21 +264,11 @@ import { KV } from "effectful-cloudflare/KV"
 
 const program = Effect.gen(function*() {
   const kv = yield* KV
-  
-  // Put JSON value (auto-serialized)
+
   yield* kv.put("user:123", { id: "123", name: "Alice" })
-  
-  // Get value (auto-deserialized)
   const user = yield* kv.get("user:123")
-  
-  // Get with metadata
   const result = yield* kv.getWithMetadata("user:123")
-  console.log(result.value, result.metadata)
-  
-  // List keys by prefix
   const keys = yield* kv.list({ prefix: "user:" })
-  
-  // Delete
   yield* kv.delete("user:123")
 })
 ```
@@ -290,33 +287,23 @@ const User = Schema.Struct({
 
 const program = Effect.gen(function*() {
   const db = yield* D1
-  
-  // Query with schema validation
-  const users = yield* db.querySchema(
-    User,
-    "SELECT * FROM users WHERE active = ?",
-    true
-  )
-  
+
+  // Query with schema validation (per-call)
+  const users = yield* db.querySchema(User, "SELECT * FROM users WHERE active = ?", true)
+
   // Query first row
-  const user = yield* db.queryFirst(
-    "SELECT * FROM users WHERE id = ?",
-    123
-  )
-  
+  const user = yield* db.queryFirst("SELECT * FROM users WHERE id = ?", 123)
+
   // Or fail if not found
-  const user2 = yield* db.queryFirstOrFail(
-    "SELECT * FROM users WHERE id = ?",
-    456
-  )
-  
+  const user2 = yield* db.queryFirstOrFail("SELECT * FROM users WHERE id = ?", 456)
+
   // Batch (atomic)
   const stmts = [
     db.prepare("INSERT INTO users (name) VALUES (?)", "Alice"),
     db.prepare("INSERT INTO users (name) VALUES (?)", "Bob"),
   ]
   yield* db.batch(stmts)
-  
+
   // Run migrations
   yield* db.migrate([
     { name: "001_init", sql: "CREATE TABLE users ..." },
@@ -332,35 +319,22 @@ import { R2 } from "effectful-cloudflare/R2"
 
 const program = Effect.gen(function*() {
   const r2 = yield* R2
-  
-  // Put object
+
   yield* r2.put("file.txt", "Hello, world!", {
     httpMetadata: { contentType: "text/plain" },
     customMetadata: { author: "Alice" },
   })
-  
-  // Get object
+
   const obj = yield* r2.get("file.txt")
-  if (obj) {
-    const text = yield* Effect.promise(() => obj.text())
-    console.log(text)
-  }
-  
-  // Or fail if not found
   const obj2 = yield* r2.getOrFail("file.txt")
-  
-  // Head (metadata only)
   const info = yield* r2.head("file.txt")
-  
-  // List objects
   const list = yield* r2.list({ prefix: "uploads/" })
-  
+
   // Multipart upload
   const upload = yield* r2.createMultipartUpload("large.bin")
   // ... upload parts ...
   yield* upload.complete([...uploadedParts])
-  
-  // Delete
+
   yield* r2.delete("file.txt")
 })
 ```
@@ -369,33 +343,28 @@ const program = Effect.gen(function*() {
 
 ```ts
 import { Schema } from "effect"
-import { Queue } from "effectful-cloudflare/Queue"
+import { QueueProducer, consume } from "effectful-cloudflare/Queue"
 
 const Message = Schema.Struct({
   type: Schema.Literal("user.created"),
   userId: Schema.String,
 })
 
-// Producer
+// Producer — with schema validation via .json() factory
 const program = Effect.gen(function*() {
-  const queue = yield* Queue
-  
-  // Send single message (JSON)
+  const queue = yield* QueueProducer
   yield* queue.send({ type: "user.created", userId: "123" })
-  
-  // Send batch
   yield* queue.sendBatch([
     { body: { type: "user.created", userId: "123" } },
     { body: { type: "user.created", userId: "456" } },
   ])
 })
 
-// Consumer (in worker export)
+// Consumer — standalone function, returns CF handler
 export default {
-  queue: Queue.consume({ schema: Message }).handler((message, meta) =>
+  ...consume({ schema: Message }).handler((message, meta) =>
     Effect.gen(function*() {
       console.log("Received:", message)
-      // Process message...
     })
   ),
 }
@@ -409,39 +378,31 @@ import { DOClient, EffectDurableObject } from "effectful-cloudflare/DurableObjec
 
 // Server: Define DO class
 export class Counter extends EffectDurableObject {
-  fetch = Effect.fn("Counter.fetch")(function*(request: Request) {
-    const storage = this.storage
-    
-    // Get current count
-    const count = yield* storage.get("count").pipe(
-      Effect.map((v) => (v as number) ?? 0)
-    )
-    
-    // Increment
-    yield* storage.put("count", count + 1)
-    
-    return new Response(JSON.stringify({ count: count + 1 }))
-  })
-  
-  // Optional: alarm
-  alarm = Effect.fn("Counter.alarm")(function*() {
-    console.log("Alarm triggered!")
-  })
+  fetch(request: Request) {
+    return Effect.gen(this, function*(self) {
+      const count = yield* self.storage.get("count").pipe(
+        Effect.map((v) => (v as number) ?? 0)
+      )
+      yield* self.storage.put("count", count + 1)
+      return new Response(JSON.stringify({ count: count + 1 }))
+    })
+  }
+
+  alarm() {
+    return Effect.gen(this, function*(self) {
+      console.log("Alarm triggered!")
+    })
+  }
 }
 
 // Client: Call DO from worker
 const program = Effect.gen(function*() {
   const client = yield* DOClient
-  
-  // Get stub
   const stub = yield* client.stub(env.COUNTER, { type: "name", name: "global" })
-  
-  // Fetch
   const response = yield* client.fetch(stub, new Request("https://counter/"))
   const data = yield* Effect.promise(() => response.json())
-  
   console.log(data.count)
-})
+}).pipe(Effect.provide(DOClient.layer()))
 ```
 
 ### AI — Workers AI
@@ -456,20 +417,18 @@ const Response = Schema.Struct({
 
 const program = Effect.gen(function*() {
   const ai = yield* AI
-  
+
   // Run model (untyped)
   const result = yield* ai.run("@cf/meta/llama-3-8b-instruct", {
     prompt: "What is the capital of France?",
   })
-  
-  // Run model with schema validation
+
+  // Run model with per-call schema validation
   const result2 = yield* ai.runSchema(
     "@cf/meta/llama-3-8b-instruct",
     Response,
     { prompt: "What is the capital of France?" }
   )
-  
-  console.log(result2.response)
 })
 ```
 
@@ -477,7 +436,7 @@ const program = Effect.gen(function*() {
 
 ```ts
 import { Effect, Layer } from "effect"
-import { Worker } from "effectful-cloudflare/Worker"
+import { serve, onScheduled, onQueue, ExecutionCtx } from "effectful-cloudflare/Worker"
 import { KV } from "effectful-cloudflare/KV"
 import { D1 } from "effectful-cloudflare/D1"
 
@@ -485,22 +444,7 @@ import { D1 } from "effectful-cloudflare/D1"
 const handler = (request: Request) => Effect.gen(function*() {
   const kv = yield* KV
   const db = yield* D1
-  
-  // Your business logic...
-  
   return new Response("OK")
-})
-
-// Scheduled handler (cron)
-const scheduled = (controller: ScheduledController) => Effect.gen(function*() {
-  const kv = yield* KV
-  // Run scheduled task...
-})
-
-// Queue consumer
-const queue = (batch: MessageBatch) => Effect.gen(function*() {
-  const db = yield* D1
-  // Process queue messages...
 })
 
 // Compose layers
@@ -508,14 +452,20 @@ const makeAppLayer = (env: Env, ctx: ExecutionContext) =>
   Layer.mergeAll(
     KV.layer(env.MY_KV),
     D1.layer(env.MY_DB),
-    Worker.ExecutionCtx.layer(ctx),
+    ExecutionCtx.layer(ctx),
   )
 
 // Export handlers
 export default {
-  fetch: Worker.serve(handler, makeAppLayer),
-  scheduled: Worker.onScheduled(scheduled, makeAppLayer),
-  queue: Worker.onQueue(queue, makeAppLayer),
+  ...serve(handler, makeAppLayer),
+  ...onScheduled((controller) => Effect.gen(function*() {
+    const kv = yield* KV
+    // Run scheduled task...
+  }), makeAppLayer),
+  ...onQueue((batch) => Effect.gen(function*() {
+    const db = yield* D1
+    // Process queue messages...
+  }), makeAppLayer),
 }
 ```
 
@@ -533,11 +483,7 @@ describe("KV", () => {
   it("should get and put values", () =>
     Effect.gen(function*() {
       const kv = yield* KV
-      
-      // Put
       yield* kv.put("key", { value: "test" })
-      
-      // Get
       const result = yield* kv.get("key")
       expect(result).toEqual({ value: "test" })
     }).pipe(
@@ -548,64 +494,42 @@ describe("KV", () => {
 ```
 
 Available mocks:
-- `Testing.memoryKV()` — KV
-- `Testing.memoryD1()` — D1
-- `Testing.memoryR2()` — R2
-- `Testing.memoryQueue()` — Queue
-- `Testing.memoryCache()` — Cache
-- `Testing.memoryDOStorage()` — Durable Object storage
+
+| Mock | Service |
+|------|---------|
+| `Testing.memoryKV()` | KV |
+| `Testing.memoryD1()` | D1 |
+| `Testing.memoryR2()` | R2 |
+| `Testing.memoryQueue()` | QueueProducer |
+| `Testing.memoryCache()` | Cache |
+| `Testing.memoryDOStorage()` | Durable Object storage |
+| `Testing.memoryVectorize()` | Vectorize |
+| `Testing.memoryAI()` | AI |
+| `Testing.memoryAIGateway()` | AIGateway |
+| `Testing.memoryBrowser()` | Browser |
+| `Testing.memoryPipeline()` | Pipeline |
 
 ## Error Types
 
 ### Shared Errors (`effectful-cloudflare/Errors`)
 
-```ts
-// Binding not available (internal)
-class BindingError extends Data.TaggedError("BindingError")<{
-  service: string
-  message: string
-}>
-
-// Native CF exception (internal)
-class TransportError extends Data.TaggedError("TransportError")<{
-  service: string
-  operation: string
-  cause: unknown
-}>
-
-// Schema validation failed (serializable)
-class SchemaError extends Schema.TaggedErrorClass<SchemaError>()(
-  "SchemaError",
-  {
-    message: Schema.String,
-    cause: Schema.Defect,
-  }
-)
-
-// Resource not found (serializable, HTTP 404)
-class NotFoundError extends Schema.TaggedErrorClass<NotFoundError>()(
-  "NotFoundError",
-  {
-    resource: Schema.String,
-    key: Schema.String,
-  },
-  { httpApiStatus: 404 }
-)
-```
+| Error | Kind | Description |
+|-------|------|-------------|
+| `BindingError` | `Data.TaggedError` (internal) | Binding not available in worker environment |
+| `SchemaError` | `Schema.TaggedErrorClass` (serializable) | Schema encode/decode failed |
+| `NotFoundError` | `Schema.TaggedErrorClass` (serializable, HTTP 404) | Resource not found |
 
 ### Module-Specific Errors
-
-Each module exports its own error types:
 
 - **KV:** `KVError`
 - **D1:** `D1Error`, `D1QueryError`, `D1MigrationError`
 - **R2:** `R2Error`, `R2MultipartError`, `R2PresignError`
-- **Queue:** `QueueError`, `QueueSendError`, `QueueConsumerError`
+- **Queue:** `QueueSendError`, `QueueConsumerError`
 - **DurableObject:** `DOError`, `StorageError`, `AlarmError`, `SqlError`, `WebSocketError`
 - **Cache:** `CacheError`
-- **AI:** `AIError`, `AIModelError`
-- **AIGateway:** `AIGatewayError`, `AIGatewayRequestError`, `AIGatewayResponseError`
-- **Vectorize:** `VectorizeError`, `VectorizeNotFoundError`
+- **AI:** `AIError`
+- **AIGateway:** `AIGatewayRequestError`, `AIGatewayResponseError`
+- **Vectorize:** `VectorizeError`
 - **Hyperdrive:** `HyperdriveError`
 - **Browser:** `BrowserError`
 - **Pipeline:** `PipelineError`
@@ -618,21 +542,20 @@ Each module exports its own error types:
 4. **Composable** — Single-instance (`Layer`) + multi-instance (`LayerMap`) patterns.
 5. **Traceable** — All methods use `Effect.fn` for automatic spans.
 6. **Tagged errors** — Precise error types for every operation.
-7. **Effect v4 native** — No v3 patterns. `ServiceMap`, `Result`, `Effect.fn`, `LayerMap`.
+7. **Effect v4 native** — `ServiceMap`, `Effect.fn`, `LayerMap`. No v3 patterns.
 
 ## Project Structure
 
 ```
 effectful-cloudflare/
 ├── src/
-│   ├── index.ts           # Re-exports all modules
 │   ├── Errors.ts          # Shared error types
-│   ├── Worker.ts          # Worker entrypoint
+│   ├── Worker.ts          # Worker entrypoint (serve, onScheduled, onQueue)
 │   ├── KV.ts              # Workers KV
 │   ├── D1.ts              # D1 Database
 │   ├── R2.ts              # R2 Object Storage
-│   ├── Queue.ts           # Queues
-│   ├── DurableObject.ts   # Durable Objects
+│   ├── Queue.ts           # Queues (QueueProducer + consume/consumeEffect)
+│   ├── DurableObject.ts   # Durable Objects (DOClient + EffectDurableObject)
 │   ├── Cache.ts           # Cache API
 │   ├── AI.ts              # Workers AI
 │   ├── AIGateway.ts       # AI Gateway
@@ -641,8 +564,8 @@ effectful-cloudflare/
 │   ├── Browser.ts         # Browser Rendering
 │   ├── Pipeline.ts        # Pipelines
 │   └── Testing.ts         # In-memory mocks
-├── test/                  # Vitest tests
-├── docs/                  # Documentation
+├── test/
+├── docs/
 └── package.json
 ```
 
@@ -654,7 +577,7 @@ effectful-cloudflare/
 
 ## License
 
-MIT © itsbroly
+MIT
 
 ## Links
 
@@ -681,19 +604,19 @@ Three Effect-based libraries for Cloudflare — each solving a different problem
 
 | | **effectful-cloudflare** | **effect-cf** | **distilled-cloudflare** |
 |--|--------------------------|---------------|--------------------------|
-| **What it wraps** | Worker runtime bindings (`env.KV`, `env.DB`, etc.) | Worker runtime bindings (`env.KV`, `env.DB`, etc.) | Cloudflare REST Management API (`api.cloudflare.com/client/v4`) |
-| **Runs where** | Inside a Cloudflare Worker | Inside a Cloudflare Worker | Anywhere (Node, Bun, CLI, CI scripts) |
+| **What it wraps** | Worker runtime bindings (`env.KV`, `env.DB`, etc.) | Worker runtime bindings | Cloudflare REST Management API (`api.cloudflare.com`) |
+| **Runs where** | Inside a Cloudflare Worker | Inside a Cloudflare Worker | Anywhere (Node, Bun, CLI, CI) |
 | **Effect version** | v4 (`ServiceMap.Service`, `LayerMap`, `Effect.fn`) | v3 (`Context.Tag`, `@effect/schema`) | v3-era (`Context.GenericTag`) |
 
 ### Service Coverage
 
 | Service | **effectful-cloudflare** | **effect-cf** | **distilled-cloudflare** |
 |---------|--------------------------|---------------|--------------------------|
-| **KV** (runtime read/write) | Yes | Yes | No (namespace management via REST) |
-| **D1** (SQL queries) | Yes | Yes | No (database management via REST) |
-| **R2** (object storage) | Yes | Yes | No (bucket management via REST) |
-| **Queue** (send/consume) | Yes | Yes | No (queue management via REST) |
-| **Durable Objects** | Yes (client + server + storage) | Yes (client + server + storage) | No |
+| **KV** (runtime) | Yes | Yes | No (namespace mgmt via REST) |
+| **D1** (SQL) | Yes | Yes | No (database mgmt via REST) |
+| **R2** (objects) | Yes | Yes | No (bucket mgmt via REST) |
+| **Queue** (send/consume) | Yes | Yes | No (queue mgmt via REST) |
+| **Durable Objects** | Yes (client + server + storage) | Yes | No |
 | **Cache API** | Yes | Yes | No |
 | **Workers AI** | Yes | No | No |
 | **AI Gateway** | Yes | Yes | No |
@@ -701,28 +624,15 @@ Three Effect-based libraries for Cloudflare — each solving a different problem
 | **Hyperdrive** | Yes | Yes | No |
 | **Browser Rendering** | Yes | No | No |
 | **Pipelines** | Yes | No | No |
-| **DNS, Pages, Zones, etc.** | No (infra-level, not runtime) | No | Yes (30 admin API services) |
-| **Worker entrypoint** | Yes (`serve`, `onScheduled`, `onQueue`) | Yes (`serve`, `onSchedule`, `createConsumer`) | No |
-| **In-memory test mocks** | Yes | Yes | No (integration tests against real API) |
-
-### Architecture & Design
-
-| Aspect | **effectful-cloudflare** | **effect-cf** | **distilled-cloudflare** |
-|--------|--------------------------|---------------|--------------------------|
-| **Service pattern** | `ServiceMap.Service` (v4) | `Context.Tag` (v3) | `Context.GenericTag` (v3) |
-| **Multi-instance** | `LayerMap.Service` (named instances) | Not supported | N/A (params per API call) |
-| **Tracing** | `Effect.fn` on every method (auto-spans) | None | None |
-| **Schema integration** | Built-in JSON + optional schema param | Opt-in per module | Mandatory (all types are Schemas) |
-| **Binding handling** | Required at construction (fail-fast) | Optional (fails at call time) | N/A (HTTP client) |
-| **Error design** | `Data.TaggedError` + `Schema.TaggedErrorClass` | `Data.TaggedError` | `Schema.TaggedError` + error categories |
+| **DNS, Pages, Zones** | No (infra-level) | No | Yes (30 admin API services) |
+| **Worker entrypoint** | Yes (`serve`, `onScheduled`, `onQueue`) | Yes | No |
+| **Test mocks** | Yes (11 services) | Yes | No |
 
 ### When to Use Which
 
 | Use case | Recommended |
 |----------|-------------|
-| Building an app that runs inside a Cloudflare Worker | **effectful-cloudflare** |
-| Effect v3 project that already uses effect-cf | **effect-cf** (or migrate to effectful-cloudflare for v4) |
-| Managing CF infrastructure from CLI tools, CI/CD, or external servers | **distilled-cloudflare** |
-| Need both runtime bindings AND admin API | **effectful-cloudflare** (inside Worker) + **distilled-cloudflare** (outside Worker) |
-
-**effectful-cloudflare** and **distilled-cloudflare** are complementary, not competing — one wraps the in-process runtime bindings, the other wraps the remote management HTTP API. **effect-cf** is the Effect v3 predecessor to effectful-cloudflare.
+| Building an app inside a Cloudflare Worker | **effectful-cloudflare** |
+| Effect v3 project already using effect-cf | **effect-cf** (or migrate for v4) |
+| Managing CF infrastructure from CLI/CI | **distilled-cloudflare** |
+| Both runtime bindings AND admin API | **effectful-cloudflare** + **distilled-cloudflare** |
